@@ -1,6 +1,10 @@
-# CareerWeaver
+# CareerWeaver — Free, Open-Source AI-Apply Alternative
 
-**One canonical fact graph, six persona lenses, one CLI that turns them into tailored resumes — then fills the application form for you, without inventing a thing you didn't do.**
+**The free, local CLI alternative to AI-Apply / LazyApply ($200-$400/mo). One canonical fact graph, six persona lenses, one CLI that turns them into tailored resumes — then fills the application form for you, without inventing a thing you didn't do.**
+
+> **$0 · MIT · Local-first · Agent-driven** — No subscription. No hosted data. Your resume, fact graph, and every tailored doc stay on your machine. Bring your own LLM (any OpenAI-compatible endpoint) or run deterministic with no key.
+
+**Free AI-Apply / LazyApply replacement · ATS auto-apply · Greenhouse / Lever / Workable / Ashby · Resume tailor · Cover letter**
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](#install)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
@@ -20,12 +24,25 @@ weaver apply           # a resume + a job  → a filled form (human sends)
 
 ---
 
-## Why CareerWeaver
+## Why CareerWeaver — the free AI-Apply alternative
+
+| | AI-Apply / LazyApply / Simplify (hosted) | **CareerWeaver** |
+|---|---|---|
+| **Price** | $200-$400/mo subscription | **$0 · MIT open-source** |
+| **Where your data lives** | Their cloud (resume, PII, docs) | **Your machine only** (`data/` gitignored) |
+| **Model** | Locked to their provider | **Bring your own** — any OpenAI-compatible endpoint, or deterministic with no key |
+| **Resume tailoring** | Black-box rewrite | **Fact graph + persona lenses** — same facts, different emphasis, `unverified_mentions` never shipped |
+| **Auto-apply** | Hosted browser, auto-submit | **Local Playwright Chrome** — verifies every field landed, parks at `held` for your audit, you press send |
+| **ATS coverage** | Often limited / scraping | **Greenhouse + Lever + Ashby + Workable** (public APIs, no scraping) |
+| **Agent / automation** | Web UI only | **CLI-first, JSON when piped** — any agent can drive `find → tailor → apply` |
+| **Telemetry** | Vendor analytics | **Zero** — no server, no account, no telemetry |
 
 * **One resume is wrong.** The same career reads differently for a Design Engineer vs. an SRE. Weaver keeps one verified fact graph and re-tells it through persona *lenses* — same facts, different emphasis.
 * **LLMs are good at re-weighting, bad at truth.** The guardrail is non-negotiable: every claim in a generated resume must trace to a fact in your graph. Unbacked claims surface as `unverified_mentions`, not shipped.
 * **Applying is the grind.** Weaver drives a real Chrome via Playwright, verifies every field actually landed, and parks at `held` for your audit — you clear CAPTCHA and press send.
 * **Bring your own model.** Any OpenAI-compatible `/chat/completions` endpoint. No LLM key? Every command degrades to a deterministic local path — the test suite runs this way.
+
+**Search keywords:** `ai-apply alternative, lazyapply alternative, free job application automation, ATS auto-apply, Greenhouse Lever Workable Ashby, resume tailoring, cover letter generator, autofill`**
 
 ---
 
