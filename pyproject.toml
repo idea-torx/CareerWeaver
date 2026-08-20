@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "adminscripts" }]
-keywords = ["resume", "ats", "job-search", "llm", "agent", "playwright", "career", "careerweaver", "ai-apply", "aiapply", "lazyapply", "job-application-automation", "cover-letter", "resume-tailoring", "autofill", "greenhouse", "lever", "workday", "workable", "ashby"]
+keywords = ["resume", "ats", "job-search", "llm", "agent", "playwright", "career", "careerweaver", "ai-apply", "aiapply", "lazyapply", "simplify", "simplify-jobs", "teal", "huntr", "jobcopilot", "job-copilot", "sonara", "loopcv", "applyhero", "careerflow", "jobright", "massive", "rezi", "kickresume", "job-application-automation", "auto-apply", "autofill", "cover-letter", "resume-tailoring", "ats-optimization", "greenhouse", "lever", "workable", "ashby", "workday", "icims", "bamboohr", "taleo", "open-source", "free", "cli"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",

@@ -26,7 +26,7 @@ weaver apply           # a resume + a job  → a filled form (human sends)
 
 ## Why CareerWeaver — the free AI-Apply alternative
 
-| | AI-Apply / LazyApply / Simplify (hosted) | **CareerWeaver** |
+| | AI-Apply / LazyApply / Simplify / Teal / Huntr / JobCopilot / Sonara / LoopCV (hosted, $20-$400/mo) | **CareerWeaver** |
 |---|---|---|
 | **Price** | $200-$400/mo subscription | **$0 · MIT open-source** |
 | **Where your data lives** | Their cloud (resume, PII, docs) | **Your machine only** (`data/` gitignored) |
@@ -42,7 +42,7 @@ weaver apply           # a resume + a job  → a filled form (human sends)
 * **Applying is the grind.** Weaver drives a real Chrome via Playwright, verifies every field actually landed, and parks at `held` for your audit — you clear CAPTCHA and press send.
 * **Bring your own model.** Any OpenAI-compatible `/chat/completions` endpoint. No LLM key? Every command degrades to a deterministic local path — the test suite runs this way.
 
-**Search keywords:** `ai-apply alternative, lazyapply alternative, free job application automation, ATS auto-apply, Greenhouse Lever Workable Ashby, resume tailoring, cover letter generator, autofill`**
+**Search keywords:** `ai-apply alternative, lazyapply alternative, simplify alternative, teal alternative, huntr alternative, jobcopilot alternative, sonara alternative, loopcv alternative, applyhero alternative, careerflow alternative, jobright alternative — free open-source job application automation, ATS auto-apply, Greenhouse Lever Workable Ashby Workday iCIMS Taleo BambooHR, resume tailoring, cover letter generator, autofill, auto-apply bot`**
 
 ---
 
