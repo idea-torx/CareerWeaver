@@ -3,6 +3,33 @@ revision = 3
 requires-python = ">=3.11"
 
 [[package]]
+name = "careerweaver"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "markdown-it-py" },
+    { name = "playwright" },
+    { name = "pypdf" },
+    { name = "python-docx" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "markdown-it-py", specifier = ">=3.0" },
+    { name = "playwright", specifier = ">=1.62.0" },
+    { name = "pypdf", specifier = ">=4.0" },
+    { name = "python-docx", specifier = ">=1.1" },
+]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=8.0" }]
+
+[[package]]
 name = "colorama"
 version = "0.4.6"
 source = { registry = "https://pypi.org/simple" }
@@ -315,33 +342,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/a9/f7/eddfe33871520adab
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d0/00/1e03a4989fa5795da308cd774f05b704ace555a70f9bf9d3be057b680bcf/python_docx-1.2.0-py3-none-any.whl", hash = "sha256:3fd478f3250fbbbfd3b94fe1e985955737c145627498896a8a6bf81f4baf66c7", size = 252987, upload-time = "2025-06-16T20:46:22.506Z" },
 ]
-
-[[package]]
-name = "resumeweaver"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "markdown-it-py" },
-    { name = "playwright" },
-    { name = "pypdf" },
-    { name = "python-docx" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "markdown-it-py", specifier = ">=3.0" },
-    { name = "playwright", specifier = ">=1.62.0" },
-    { name = "pypdf", specifier = ">=4.0" },
-    { name = "python-docx", specifier = ">=1.1" },
-]
-
-[package.metadata.requires-dev]
-dev = [{ name = "pytest", specifier = ">=8.0" }]
 
 [[package]]
 name = "typing-extensions"
