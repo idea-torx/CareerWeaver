@@ -1,0 +1,52 @@
+[project]
+name = "careerweaver"
+version = "0.1.0"
+description = "CareerWeaver — canonical fact graph + persona lenses → tailored resumes (md/docx) and guardrailed auto-apply. Runs entirely on your machine."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "adminscripts" }]
+keywords = ["resume", "ats", "job-search", "llm", "agent", "playwright", "career"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Office/Business",
+]
+dependencies = [
+    "python-docx>=1.1",
+    "pypdf>=4.0",
+    "markdown-it-py>=3.0",
+    "playwright>=1.62.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/idea-torx/CareerWeaver"
+Repository = "https://github.com/idea-torx/CareerWeaver"
+Issues = "https://github.com/idea-torx/CareerWeaver/issues"
+
+[project.scripts]
+weaver = "weaver.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q -m 'not live'"
+markers = [
+    "live: hits the real network (run explicitly with -m 'live')",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/weaver"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/weaver", "samples", "README.md", "LICENSE"]

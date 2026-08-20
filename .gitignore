@@ -1,0 +1,55 @@
+# PII / local-only — never commit user data
+data/
+*.db
+*.sqlite*
+.env
+*.pem
+*.key
+seed_resumes/
+# real resumes / generated artifacts that may carry personal details
+*.docx
+*.pdf
+resume*.md
+jobs.json
+out/
+traces/
+*.trace.json
+
+# deps / build
+node_modules/
+.venv/
+.python-venv/
+__pycache__/
+*.pyc
+.wrangler/
+.mf/
+.cache/
+dist/
+build/
+
+# local working contracts / audits — never publish (Leo-private)
+.avoid-feature.md
+.audit-checklist.md
+.build-blog*.md
+.completion-flags.md
+.dropbox-*.md
+.error-report.md
+.glm-strategy.md
+.harden-report.md
+.keepopen.md
+.lane1-jobs.md
+.ledger.md
+.nativeselect.md
+.packaging.md
+.pdf-render.md
+.visible-audit.md
+.wide-find.md
+.run_env.sh
+.claude/
+docs/claudecode-*.md
+
+# editor / os
+.DS_Store
+.idea/
+.vscode/
+*.swp

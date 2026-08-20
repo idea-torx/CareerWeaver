@@ -1,0 +1,36 @@
+Title: Forward Deployed AI Engineer
+Company: Verdant Systems
+
+About the role
+
+Verdant Systems builds agentic tooling for enterprise operations teams. Forward
+Deployed AI Engineers embed directly with our customers, ship production
+software alongside their teams, and stay accountable for the outcome after the
+handoff.
+
+What you'll do
+
+- Embed with a customer team for 6-12 week engagements and own delivery end to end.
+- Build and ship full-stack applications: TypeScript, React, Node.js, Python, Postgres, Redis.
+- Design multi-agent workflows and async job pipelines that hold up under production load.
+- Stand up staging-to-production environments and own deployment, monitoring, and incident response.
+- Translate ambiguous customer problems into working software within the first two weeks.
+- Enable non-technical teams to adopt AI tooling without our engineers in the room.
+
+Requirements
+
+- 5+ years shipping production software, including significant full-stack ownership.
+- Hands-on experience with LLM APIs, prompt engineering, RAG, and agentic workflows.
+- Comfort with API design, auth, real-time sync, and relational databases.
+- Client-facing experience; you can run a working session with a customer's staff engineers.
+- Bias toward action and a portfolio of things you personally shipped.
+
+Nice to have
+
+- Experience orchestrating AI coding agents to accelerate delivery.
+- Background in design or creative tooling.
+- Prior startup or founding experience.
+
+Compensation and benefits
+
+Competitive salary, equity, remote-first with quarterly onsites.
