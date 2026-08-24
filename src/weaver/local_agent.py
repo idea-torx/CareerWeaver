@@ -1991,6 +1991,10 @@ def run_apply(
     #: "Label = value" for every value VERIFIED to have landed, carried across
     #: steps so the model never re-asks a question it already answered.
     answered_fields: list[str] = []
+    #: Notes from resume uploads that reached the input but were never
+    #: acknowledged by the ATS. Non-empty means the park is an AUDIT, not a
+    #: ready-to-send hold — see the park sites below (run 145, Metabase).
+    unconfirmed_uploads: list[str] = []
     #: fingerprint|control → how many times that forward click changed nothing.
     nav_stalls: dict[str, int] = {}
     #: How many steps the ENGINE advanced on its own.
@@ -2015,9 +2019,15 @@ def run_apply(
     #: the moment it happens; a kill can no longer erase what the run did.
     trace_file = trace_file or os.environ.get("WEAVER_TRACE_FILE") or ""
 
-    def push(action: str, target: str, ok: bool, note: str) -> None:
+    def push(action: str, target: str, ok: bool, note: str, verified: str = "") -> None:
         entry = {"n": n, "action": action, "target": target, "ok": ok, "note": note,
                  "url": (state or {}).get("url")}
+        # An upload's verification strength travels with the trace: "attached"
+        # and "attached, but the ATS never acknowledged it" are different
+        # findings, and a post-mortem must not have to re-run to tell them
+        # apart (run 145, Metabase 2026-08-24).
+        if verified:
+            entry["verified"] = verified
         trace.append(entry)
         if trace_file:
             with contextlib.suppress(Exception):
@@ -2067,6 +2077,25 @@ def run_apply(
             "screenshot_b64": last_screenshot or "",
         }
 
+    def park(note: str, **fields: str) -> None:
+        """Park a `--hold` run, and say honestly what kind of park it is.
+
+        `hold` is the kind the ledger records as "held" — filled, ready for the
+        human to send. A run whose resume the form never acknowledged has not
+        earned that word: it parks under its own kind so `ledger.hold_status`
+        leaves it at `audit_pending`, and the reason names the file so the human
+        checks the upload before sending (run 145, Metabase 2026-08-24).
+        """
+        if not unconfirmed_uploads:
+            escalate("hold", note, **fields)
+            return
+        escalate(
+            "upload_unconfirmed",
+            f"{note} — BUT the form never confirmed the resume: "
+            f"{unconfirmed_uploads[0]} — check the upload before sending",
+            **fields,
+        )
+
     def note_step(observed: dict[str, Any] | None) -> None:
         """Append this page state to the durable navigation memory."""
         print_ = page_fingerprint(observed)
@@ -2094,9 +2123,17 @@ def run_apply(
         """Evidence at least one applicant value reached the form: a verified
         answer, or an ok type/upload action. Every hold park consults this —
         "FILLED + HELD" with zero landed values is the false-success family
-        (Brex nav stops, then the Ashby listing submit-block, runs 121-124)."""
+        (Brex nav stops, then the Ashby listing submit-block, runs 121-124).
+
+        An `input-only` upload is NOT such evidence: the file is on the input
+        and the ATS never acknowledged it, which is precisely the state run 145
+        parked in while reporting a filled form.
+        """
         return bool(answered_fields) or any(
-            t.get("ok") and t.get("action") in ("type", "upload") for t in trace
+            t.get("ok")
+            and t.get("action") in ("type", "upload")
+            and t.get("verified") != "input-only"
+            for t in trace
         )
 
     def verify_batch(
@@ -2636,7 +2673,7 @@ def run_apply(
                     # A held run's stop is the PARK: the form is as filled as it
                     # gets, the human audits it in the open window and sends.
                     push("stop", action.get("target") or "", True, f"held for audit: {reason}")
-                    escalate("hold", f"held for audit (--hold): {reason}")
+                    park(f"held for audit (--hold): {reason}")
                     done = True
                     break
                 status = "stopped"
@@ -2689,8 +2726,7 @@ def run_apply(
                     break
                 note = "form filled — submit blocked (--hold); the human audits and sends"
                 push("click", action.get("target") or "", False, note)
-                escalate(
-                    "hold",
+                park(
                     note,
                     label=action.get("target") or "",
                     ref=action.get("target") or "",
@@ -2840,7 +2876,24 @@ def run_apply(
                     f"answers. Re-type a COMPLETE answer that fits within {clipped} characters",
                 )
             else:
-                push(action["action"], target, bool(result.get("ok")), str(result.get("note") or ""))
+                push(
+                    action["action"],
+                    target,
+                    bool(result.get("ok")),
+                    str(result.get("note") or ""),
+                    verified=str(result.get("verified") or ""),
+                )
+            # A resume the ATS never acknowledged is the run-145 failure: the
+            # file sat on the input, the form had nothing, and the run parked
+            # looking clean. Remember it so the park can say so. A cover letter
+            # is optional — an unconfirmed one is not worth an audit.
+            if (
+                action["action"] == "upload"
+                and result.get("ok")
+                and result.get("verified") == "input-only"
+                and not result.get("cover")
+            ):
+                unconfirmed_uploads.append(str(result.get("note") or "").strip())
             if action["action"] == "type" and result.get("ok"):
                 batch_types.append(
                     (

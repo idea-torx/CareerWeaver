@@ -18,7 +18,7 @@ from typing import Any, Callable
 
 import pytest
 
-from weaver import local_agent
+from weaver import ledger, local_agent
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -2024,3 +2024,152 @@ def test_submit_like_narrowing_needs_all_three_conditions() -> None:
     # text that says submit is always submit-like, whatever the page shape
     sub = {"fields": [], "buttons": [{"ref": "b0", "text": "Submit application", "type": "submit"}]}
     assert local_agent._submit_like(sub, "b0", virgin_run=True) is True
+
+
+# ----------------------------------------- unconfirmed uploads (run 145, lever)
+
+
+class UnconfirmedUploadDriver(StubDriver):
+    """The file reaches the input; the ATS never acknowledges it.
+
+    Run 145 (Metabase, 2026-08-24): the trace said
+    `upload f0 ok=true — attached ...docx` and the form was found with no
+    resume on it. The driver now reports that state honestly; the loop must not
+    launder it back into a clean park.
+    """
+
+    def upload(self, target: str) -> dict[str, Any]:
+        self.uploads.append(target)
+        return {
+            "ok": True,
+            "verified": "input-only",
+            "cover": False,
+            "note": (
+                "attached mira-halloway-resume.docx — the file is on the input, but "
+                "the page never named it back, so the form may not have taken it"
+            ),
+        }
+
+
+class ConfirmedUploadDriver(StubDriver):
+    """The control: the ATS renders the filename back."""
+
+    def upload(self, target: str) -> dict[str, Any]:
+        self.uploads.append(target)
+        return {
+            "ok": True,
+            "verified": "rendered",
+            "cover": False,
+            "note": "attached mira-halloway-resume.docx — the page shows it: Attached: mira-halloway-resume.docx",
+        }
+
+
+def _upload_then_stop() -> Callable[[str, str], Any]:
+    return scripted([
+        {"actions": [
+            {"action": "upload", "target": "f0"},
+            {"action": "stop", "text": "form filled"},
+        ]},
+    ])
+
+
+def test_the_trace_records_that_an_upload_was_unconfirmed() -> None:
+    """V3 — a post-mortem must tell "attached" from "attached, unconfirmed"
+    without re-running the application."""
+    driver = UnconfirmedUploadDriver([field("f0", "Resume/CV", type="file")])
+
+    result = run(driver, _upload_then_stop(), hold=True)
+
+    entry = next(t for t in result["trace"] if t["action"] == "upload")
+    assert entry["ok"] is True
+    assert entry["verified"] == "input-only"
+
+
+def test_an_unconfirmed_upload_is_not_a_landed_value() -> None:
+    """V1 — `any_value_landed` counted any ok upload as proof a value reached
+    the form, so a run whose ONLY "fill" was an unconfirmed attach could park as
+    a filled form. It never reached the form in any sense that matters."""
+    driver = UnconfirmedUploadDriver([field("f0", "Resume/CV", type="file")])
+
+    result = run(driver, _upload_then_stop(), hold=True)
+
+    assert result["status"] == "stopped"
+    assert "never" in (result["reason"] or "").lower()
+
+
+def test_an_unconfirmed_upload_parks_for_audit_not_as_held() -> None:
+    """V2 — with other values genuinely landed the run still parks, but it must
+    NOT read "ready for your send": the ledger keeps it at audit_pending and the
+    reason names the attachment so a human looks at it."""
+    driver = UnconfirmedUploadDriver([
+        field("f0", "Resume/CV", type="file"),
+        field("f1", "First name", required=True),
+    ])
+    chat = scripted([
+        {"actions": [
+            {"action": "type", "target": "f1", "text": "Mira"},
+            {"action": "upload", "target": "f0"},
+            {"action": "stop", "text": "form filled"},
+        ]},
+    ])
+
+    result = run(driver, chat, hold=True)
+
+    assert result["status"] == "audit_pending"
+    assert result["audit"]["kind"] != "hold"  # ...so hold_status leaves it alone
+    assert ledger.hold_status(result, "audit_pending") == "audit_pending"
+    reason = (result["reason"] or "").lower()
+    assert "resume" in reason or "attach" in reason
+    assert "mira-halloway-resume.docx" in (result["reason"] or "")
+
+
+def test_a_confirmed_upload_still_parks_as_held() -> None:
+    """The control — verification must not turn every upload into an audit."""
+    driver = ConfirmedUploadDriver([
+        field("f0", "Resume/CV", type="file"),
+        field("f1", "First name", required=True),
+    ])
+    chat = scripted([
+        {"actions": [
+            {"action": "type", "target": "f1", "text": "Mira"},
+            {"action": "upload", "target": "f0"},
+            {"action": "stop", "text": "form filled"},
+        ]},
+    ])
+
+    result = run(driver, chat, hold=True)
+
+    assert result["status"] == "audit_pending"
+    assert result["audit"]["kind"] == "hold"
+    assert ledger.hold_status(result, "audit_pending") == "held"
+
+
+def test_an_unconfirmed_cover_letter_does_not_block_the_park() -> None:
+    """A cover letter is optional — an unconfirmed one is not worth an audit."""
+
+    class CoverDriver(StubDriver):
+        def upload(self, target: str) -> dict[str, Any]:
+            self.uploads.append(target)
+            return {
+                "ok": True,
+                "verified": "input-only",
+                "cover": True,
+                "note": "attached cover.docx (cover letter) — the page never named it back",
+            }
+
+    driver = CoverDriver([
+        field("f0", "Cover letter", type="file"),
+        field("f1", "First name", required=True),
+    ])
+    chat = scripted([
+        {"actions": [
+            {"action": "type", "target": "f1", "text": "Mira"},
+            {"action": "upload", "target": "f0"},
+            {"action": "stop", "text": "form filled"},
+        ]},
+    ])
+
+    result = run(driver, chat, hold=True)
+
+    assert result["audit"]["kind"] == "hold"
+    assert ledger.hold_status(result, "audit_pending") == "held"

@@ -1317,3 +1317,124 @@ def test_batch_real_chrome_down_fails_only_workable_entries(
     assert "real-chrome unavailable" in by_id[ids["workable"]]["reason"]
     assert "real Chrome" in by_id[ids["workable"]]["reason"]  # the remedy travels
     assert by_id[ids["greenhouse"]]["outcome"] == "filled"  # tab-host lane unaffected
+
+
+# ------------------------------------------------- real-chrome host routing
+
+
+def test_lever_urls_route_to_the_real_chrome_host() -> None:
+    """Run 145 (Metabase, 2026-08-24) hit an endless CAPTCHA re-challenge in the
+    Playwright tab-host: Lever flags it as a bot. Same family as workable's
+    Turnstile — the fix is the host, not the fill loop."""
+    assert cli._needs_real_chrome("https://jobs.lever.co/metabase/b6ab96a1/apply")
+    assert cli._needs_real_chrome("https://apply.workable.com/acme/j/3A2AE898F0/")
+    # the tab-host lane must stay untouched — these fill fine today
+    assert not cli._needs_real_chrome("https://job-boards.greenhouse.io/customerio/jobs/8039027")
+    assert not cli._needs_real_chrome("https://jobs.ashbyhq.com/browserbase/b340041a")
+    assert not cli._needs_real_chrome("")
+
+
+def test_real_chrome_hosts_are_env_overridable(monkeypatch: pytest.MonkeyPatch) -> None:
+    """AGENTS.md rule 7: a fresh clone adds a bot-walled provider by config,
+    never by editing code."""
+    monkeypatch.setenv("WEAVER_REAL_CHROME_HOSTS", "boards.example.com, jobs.lever.co")
+    assert cli._needs_real_chrome("https://boards.example.com/acme/apply")
+    assert cli._needs_real_chrome("https://jobs.lever.co/metabase/b6ab96a1/apply")
+    # an explicit set REPLACES the defaults — workable is not in this one
+    assert not cli._needs_real_chrome("https://apply.workable.com/acme/j/3A2AE898F0/")
+
+
+def test_blank_real_chrome_hosts_override_falls_back_to_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An empty/whitespace override is an unset override, not "route nothing" —
+    otherwise a stray export silently sends workable back into the tab-host."""
+    monkeypatch.setenv("WEAVER_REAL_CHROME_HOSTS", "   ,  ")
+    assert cli._needs_real_chrome("https://apply.workable.com/acme/j/3A2AE898F0/")
+    assert cli._needs_real_chrome("https://jobs.lever.co/metabase/b6ab96a1/apply")
+
+
+# ------------------------------------------------- apps set-status (the ledger)
+
+
+def _one_application(workspace: Path, status: str = "held") -> int:
+    conn = db.connect(workspace)
+    try:
+        return db.add_application(
+            conn, resume_id=None, job_id=None, status=status, payload={}, response={}
+        )
+    finally:
+        conn.close()
+
+
+def test_apps_set_status_records_the_real_outcome(
+    workspace: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The ledger goes stale the moment a human sends a held tab — weaver cannot
+    see the send. Without this, reconciling means hand-written SQL against the
+    live db, which is how a ledger stops being trusted."""
+    app_id = _one_application(workspace, "held")
+
+    code, payload = run(
+        capsys, "--data-dir", str(workspace), "apps", "set-status", str(app_id), "submitted"
+    )
+
+    assert code == 0
+    assert payload["ok"] is True
+    assert payload["was"] == "held" and payload["status"] == "submitted"
+    conn = db.connect(workspace)
+    try:
+        assert db.get_application(conn, app_id)["status"] == "submitted"
+    finally:
+        conn.close()
+
+
+def test_apps_set_status_takes_a_note_and_keeps_it(
+    workspace: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Why a row changed matters as much as that it did — a `failed` with no
+    reason is the thing nobody can act on later."""
+    app_id = _one_application(workspace, "audit_pending")
+
+    code, payload = run(
+        capsys, "--data-dir", str(workspace), "apps", "set-status", str(app_id),
+        "failed", "--note", "lever bot wall — repeated CAPTCHA, never submitted",
+    )
+
+    assert code == 0
+    conn = db.connect(workspace)
+    try:
+        app = db.get_application(conn, app_id)
+    finally:
+        conn.close()
+    assert app["status"] == "failed"
+    assert "lever bot wall" in json.dumps(app["response"])
+
+
+def test_apps_set_status_refuses_an_unknown_status(
+    workspace: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A typo must not invent a ledger state that no report knows how to count."""
+    app_id = _one_application(workspace, "held")
+
+    code, payload = run(
+        capsys, "--data-dir", str(workspace), "apps", "set-status", str(app_id), "submited"
+    )
+
+    assert code == cli.EXIT_USAGE
+    assert "submitted" in payload["error"]  # the remedy names the real ones
+    conn = db.connect(workspace)
+    try:
+        assert db.get_application(conn, app_id)["status"] == "held"  # untouched
+    finally:
+        conn.close()
+
+
+def test_apps_set_status_unknown_application_is_a_usage_error(
+    workspace: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code, payload = run(
+        capsys, "--data-dir", str(workspace), "apps", "set-status", "9999", "submitted"
+    )
+    assert code == cli.EXIT_USAGE
+    assert "9999" in payload["error"]
