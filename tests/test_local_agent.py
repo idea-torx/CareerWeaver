@@ -1126,6 +1126,43 @@ def test_llm_retries_on_timeout_then_succeeds() -> None:
     assert json.loads(calls[0].data)["model"] == "gpt-5.6-luna"
 
 
+def test_a_call_that_ran_out_the_clock_is_not_re_sent_for_another_full_timeout() -> None:
+    """The 2026-08-26 Ashby stall: three 300s timeouts = 907s of trace silence.
+
+    A two-step Ashby posting (overview -> /application) clicks through, clears
+    its per-field state, and the post-navigation turn goes into the relay and
+    never comes back. `make_chat` re-sent the identical body twice more — a
+    full 300s each — so ONE turn cost 3*300 + 2 + 5 = 907s with nothing written
+    to the trace. Endex was killed at 13 minutes, inside that window, with the
+    application form loaded and empty; Daydream and Owner survived only because
+    nobody killed them (both traces read "slow turn (907s) failed").
+
+    An attempt that spent the whole per-call budget is done: hand it up so
+    `think` announces it and retries the turn once. Fast failures still retry.
+    """
+    calls: list[Any] = []
+    naps: list[float] = []
+    now = [0.0]
+
+    def urlopen(request: Any, timeout: float | None = None) -> FakeResponse:
+        calls.append(request)
+        now[0] += timeout or 0.0  # the relay never answers; the read times out
+        raise TimeoutError("The read operation timed out")
+
+    chat = local_agent.make_chat(
+        {**CONFIG, "timeout_ms": 300_000},
+        urlopen=urlopen,
+        sleep=naps.append,
+        clock=lambda: now[0],
+    )
+    with pytest.raises(RuntimeError, match="timed out"):
+        chat("system", "user")
+
+    assert len(calls) == 1, "a timed-out body was re-sent for another full timeout"
+    assert naps == [], "the run also slept between the doomed retries"
+    assert now[0] == 300.0, "one turn must cost one timeout, not three"
+
+
 def test_llm_retries_5xx_and_gives_up_with_the_status() -> None:
     calls: list[Any] = []
 

@@ -3158,6 +3158,7 @@ def make_chat(
     config: dict[str, Any] | None = None,
     urlopen: Callable[..., Any] | None = None,
     sleep: Callable[[float], None] = sleep_ms,
+    clock: Callable[[], float] = time.monotonic,
 ) -> Callable[[str, str], dict[str, Any] | None]:
     """A `chat(system, user) -> dict` over an OpenAI-compatible endpoint."""
     conf = dict(config or llm_config())
@@ -3190,8 +3191,21 @@ def make_chat(
         ).encode("utf-8")
 
         last_error: Exception | None = None
+        started = clock()
         for attempt in range(attempts):
             if attempt:
+                # A retry is only worth taking while the turn still has time to
+                # spend. An attempt that ran out the clock (a read timeout) has
+                # already cost the FULL per-call budget, and re-sending the
+                # identical body to the same relay buys nothing — three of them
+                # is 907s of trace silence with the browser parked on a loaded
+                # form (2026-08-26: Endex killed at 13min, Daydream and Owner
+                # both logged "slow turn (907s) failed"). Stop here instead and
+                # let `think` announce the failure and retry the turn once.
+                # Failures that come back fast (connection refused, 429/5xx)
+                # cost nothing and still get every attempt.
+                if clock() - started >= timeout_s:
+                    break
                 sleep(RETRY_BACKOFF_MS[min(attempt - 1, len(RETRY_BACKOFF_MS) - 1)])
             request = urllib.request.Request(
                 f"{base}/chat/completions", data=body, headers=headers, method="POST"
