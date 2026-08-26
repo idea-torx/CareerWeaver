@@ -1844,8 +1844,8 @@ def test_a_slow_failed_turn_is_retried_once() -> None:
 
     assert len(calls) == 2
     assert raw == {"actions": [{"action": "done"}]}
-    assert "retrying once" in note
-    assert any("retrying once" in line for line in lines)
+    assert "retrying (2/4)" in note
+    assert any("retrying (2/4)" in line for line in lines)
 
 
 def test_a_fast_failure_is_not_retried() -> None:
@@ -1862,15 +1862,70 @@ def test_a_fast_failure_is_not_retried() -> None:
     assert len(calls) == 1  # a fast failure is a real failure
 
 
-def test_a_slow_turn_that_fails_twice_still_fails() -> None:
+def test_a_slow_turn_that_fails_every_attempt_still_fails() -> None:
     clock = FakeClock()
+    calls: list[int] = []
 
     def chat(system: str, user: str) -> Any:
+        calls.append(1)
         clock.now += 60.0
         raise TimeoutError("the read operation timed out")
 
     with pytest.raises(TimeoutError):
         local_agent.think(chat, "sys", "user", clock=clock)
+    assert len(calls) == local_agent.THINK_ATTEMPTS  # the budget is bounded
+
+
+def test_the_relay_answers_on_the_fourth_try_and_the_form_still_fills() -> None:
+    """The Owner case, 2026-08-26 (apply-20260826-180447 / -182159).
+
+    Both runs that actually filled a form that day did it on the FOURTH relay
+    round-trip: three reads timed out (logged as "slow turn (907s) failed" —
+    3 * 300s + 2s + 5s of backoff, all three inside one `chat`), then the relay
+    answered in 57.6s / 23.7s and the form filled.
+
+    8318e34 stopped `chat` re-sending a body that already spent the per-call
+    timeout — correct, but it cut the turn's budget to 2 attempts / 609s, which
+    is short of where those two runs succeeded. Endex died there twice.
+
+    This drives the REAL `make_chat` + `think` pair so the assertion is on the
+    composed budget: one timeout per attempt, four attempts, 1200s, filled form.
+    """
+    calls: list[Any] = []
+    now = [0.0]
+    driver = StubDriver([field("f0", "First name")])
+
+    def urlopen(request: Any, timeout: float | None = None) -> FakeResponse:
+        calls.append(request)
+        now[0] += timeout or 0.0  # the relay never answers; the read times out
+        if len(calls) < 4:
+            raise TimeoutError("The read operation timed out")
+        return completion(
+            '{"actions":[{"action":"type","target":"f0","text":"Mira"},'
+            '{"action":"stop","text":"done"}]}'
+        )
+
+    chat = local_agent.make_chat(
+        {**CONFIG, "timeout_ms": 300_000},
+        urlopen=urlopen,
+        sleep=lambda _ms: None,
+        clock=lambda: now[0],
+    )
+    real_think = local_agent.think
+    result = local_agent.run_apply(
+        driver,
+        lambda system, user: real_think(chat, system, user, clock=lambda: now[0])[0],
+        applicant=APPLICANT,
+        job=JOB,
+        has_resume=True,
+        sleep=lambda _ms: None,
+        progress=lambda _line: None,
+    )
+
+    assert len(calls) == 4, "the turn gave up before the attempt that answers"
+    assert result["status"] == "stopped"
+    assert driver.value("f0") == "Mira", "the form never got filled"
+    assert now[0] == 1200.0  # 4 * 300s, still under the 1814s of pre-8318e34
 
 
 def test_the_heartbeat_prints_while_a_turn_is_in_flight() -> None:

@@ -59,8 +59,21 @@ DETACH_RETRIES = 3
 #: escalation / budget) may park a run at `audit_pending`.
 STOP_NUDGE_LIMIT = 3
 #: A think turn slower than this is a slow relay, not a hang: it gets a visible
-#: note, and — if it FAILED that slowly — one retry before the run gives up.
+#: note, and — if it FAILED that slowly — the turn is re-sent before the run
+#: gives up.
+#: ponytail: this threshold is independent of the per-call timeout in
+#: `make_chat`. A caller-supplied `timeout_ms` below 45s would make every
+#: timed-out attempt look "fast" and skip the retry entirely; nothing in-tree
+#: does that (DEFAULT_TIMEOUT_MS is 300s). Couple them if a short-timeout
+#: config ever ships.
 SLOW_TURN_MS = 45_000
+#: How many times `think` may send one turn at the relay. Each attempt costs at
+#: most one `make_chat` per-call timeout (300s), because a call that ran out
+#: the clock is no longer re-sent inside `chat` (see `make_chat`). 4 * 300s =
+#: 1200s worst case, against 1814s before that guard existed. The number is
+#: evidence, not taste: on 2026-08-26 both runs that filled a form (Owner,
+#: Daydream) did it on the 4th relay round-trip, after 907s of timeouts.
+THINK_ATTEMPTS = 4
 #: How often the "thinking… 24s" heartbeat prints while a turn is in flight.
 PROGRESS_TICK_MS = 10_000
 #: A step-by-step form is a state GRAPH, not one page. After a forward control
@@ -1904,31 +1917,42 @@ def think(
     user: str,
     progress: Callable[[str], None] | None = None,
     tick_ms: int = PROGRESS_TICK_MS,
-    slow_ms: int = SLOW_TURN_MS,
+    slow_ms: int | None = None,
     clock: Callable[[], float] = time.monotonic,
+    attempts: int | None = None,
 ) -> tuple[Any, int, str]:
-    """One model turn, with a heartbeat and one retry for a slow FAILED turn.
+    """One model turn, with a heartbeat and retries for a slow FAILED turn.
 
     A 35s think turn on a slow relay is progress, not a hang — it gets a visible
     "thinking… 20s" line every tick and a `slow turn` note in the trace. If a
-    turn that slow raises (the relay dropped it), the turn is retried ONCE
-    before the run is allowed to fail.
+    turn that slow raises (the relay dropped it), the turn is re-sent, up to
+    `THINK_ATTEMPTS` times, before the run is allowed to fail. This is the whole
+    retry budget for a turn: `chat` stops re-sending a body that already spent
+    the per-call timeout, so one think attempt is one relay timeout.
+
+    A FAST failure is a real failure (bad key, 4xx, refused): `chat` already
+    burned its own attempts on it, so it is raised, not re-sent.
+
+    `slow_ms` / `attempts` default to the module constants at CALL time, so
+    changing the constant actually changes behaviour.
 
     Returns `(raw_reply, elapsed_ms, note)`; `note` is "" for a normal turn.
     """
     emit = progress or (lambda _line: None)
+    slow_ms = SLOW_TURN_MS if slow_ms is None else slow_ms
+    tries = max(1, THINK_ATTEMPTS if attempts is None else attempts)
     retried = ""
-    for attempt in range(2):
+    for attempt in range(tries):
         started = clock()
         stop, thread = _heartbeat(emit, tick_ms, clock)
         try:
             raw = chat(system, user)
         except Exception as exc:
             elapsed_ms = int((clock() - started) * 1000)
-            if attempt == 0 and elapsed_ms >= slow_ms:
+            if attempt + 1 < tries and elapsed_ms >= slow_ms:
                 retried = (
-                    f"slow turn ({elapsed_ms // 1000}s) failed — retrying once "
-                    f"before giving up: {_describe(exc)}"
+                    f"slow turn ({elapsed_ms // 1000}s) failed — retrying "
+                    f"({attempt + 2}/{tries}) before giving up: {_describe(exc)}"
                 )
                 emit(retried)
                 continue
