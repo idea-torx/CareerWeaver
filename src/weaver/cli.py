@@ -626,10 +626,11 @@ def cmd_apply(args: argparse.Namespace) -> int:
         ]
         return emit(args, data, human)
 
-    if not llm.api_key():
+    if not llm.available():
         return fail(
             args,
-            "WEAVER_API_KEY is not set — the local agent loop has no model. Re-run with --dry-run.",
+            "no model configured — set WEAVER_LLM_CMD (a local CLI) or "
+            "WEAVER_API_KEY (an HTTP endpoint). Re-run with --dry-run.",
             EXIT_USAGE,
         )
 

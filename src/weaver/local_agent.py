@@ -3149,13 +3149,14 @@ def _preview(value: Any) -> str:
 
 
 # --------------------------------------------------------------------------
-# The model, over the opencode-go relay.
+# The model, over whatever provider is configured (HTTP relay or local CLI).
 # --------------------------------------------------------------------------
 
-#: Per-turn LLM timeout. Local relays (opencode-go → deepseek/glm) routinely
-#: think for 30-40s on a long form and a batch reply can run minutes; 120s was
-#: cutting live turns off, so the ceiling is 5 minutes and the heartbeat (see
-#: `think`) is what tells the human it is alive.
+#: Per-turn LLM timeout. A slow relay routinely thinks for 30-40s on a long
+#: form and a batch reply can run minutes; 120s was cutting live turns off, so
+#: the ceiling is 5 minutes and the heartbeat (see `think`) is what tells the
+#: human it is alive. A CLI provider (`WEAVER_LLM_CMD`) uses it as its
+#: subprocess timeout and never retries — it fails fast and loudly instead.
 DEFAULT_TIMEOUT_MS = 300_000
 #: Transient relay slowness (queue + generation) — retry before giving up.
 MAX_ATTEMPTS = 3
@@ -3184,8 +3185,17 @@ def make_chat(
     sleep: Callable[[float], None] = sleep_ms,
     clock: Callable[[], float] = time.monotonic,
 ) -> Callable[[str, str], dict[str, Any] | None]:
-    """A `chat(system, user) -> dict` over an OpenAI-compatible endpoint."""
+    """A `chat(system, user) -> dict` over the configured provider.
+
+    `WEAVER_LLM_CMD` (a local CLI) short-circuits everything below; without it
+    this is the OpenAI-compatible HTTP path.
+    """
     conf = dict(config or llm_config())
+    timeout_s = float(conf.get("timeout_ms") or DEFAULT_TIMEOUT_MS) / 1000.0
+    if llm.cli_command():
+        # A CLI provider needs no url, no key and no retry ladder of its own:
+        # it fails fast and loudly, and `think` already retries the turn.
+        return lambda system, user: llm.cli_complete(system, user, timeout_s)
     open_url = urlopen or urllib.request.urlopen
     base = str(conf.get("base_url") or "").rstrip("/")
     if not base:
@@ -3193,7 +3203,6 @@ def make_chat(
     if not conf.get("api_key"):
         raise RuntimeError("no LLM key — set WEAVER_API_KEY (or OPENAI_API_KEY) for the agent loop")
     attempts = max(1, int(conf.get("max_attempts") or MAX_ATTEMPTS))
-    timeout_s = float(conf.get("timeout_ms") or DEFAULT_TIMEOUT_MS) / 1000.0
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {conf['api_key']}",

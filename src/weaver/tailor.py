@@ -504,7 +504,7 @@ def tailor(
     fallback_reason: str | None = None
     prompt = build_prompt(conn, lens, profile)
 
-    if use_llm and llm.api_key():
+    if use_llm and llm.available():
         user = _user_message(lens, job)
         data = llm.complete_json(prompt, user)
         if data.get("_fallback"):

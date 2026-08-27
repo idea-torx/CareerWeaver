@@ -35,11 +35,13 @@ before it's trusted.
 
 ## The build · audit · test loop (this is the disciplined workflow)
 - **Build**: implement from a written, precise contract (a .md working-file), single
-  concern, with regression tests. Claude Code (Opus@medium) is the reference builder.
+  concern, with regression tests. Use your strongest model at medium effort.
 - **Audit**: a SECOND independent mind reviews the change read-only before it's
-  trusted — GLM 5.3 via opencode is the cheap audit arm (the "fable alternative");
-  Claude can audit too but costs more. Audits flag: correctness, false-success paths,
-  wrong-widget clicks, ref/identity drift, dead code, unproven code paths.
+  trusted — a DIFFERENT model from the one that built it, so the review is never the
+  author marking their own work. A cheaper model is fine and usually enough; the
+  independence is what matters, not the price. Audits flag: correctness,
+  false-success paths, wrong-widget clicks, ref/identity drift, dead code,
+  unproven code paths.
 - **Test**: `uv run pytest`. Add a regression test capturing the bug for every fix.
 - Only after green + audit does the change get a real run.
 

@@ -55,6 +55,9 @@ export WEAVER_MODEL=their-model-id
 
 `WEAVER_BASE_URL` without `WEAVER_MODEL` is a config error (weaver tells you on stderr and in `weaver stats --json`, then falls back deterministically). **No key is fine** — every command degrades to deterministic local assembly.
 
+Already have a model behind a CLI? Skip the key entirely — `WEAVER_LLM_CMD` runs
+that argv and pipes the prompt through stdin (see `docs/agents.md`).
+
 For headless/cron harnesses that can't run a shell, put `KEY=VALUE` lines in `data/env` instead (see `docs/agents.md`).
 
 ## Fact graph — import what you've already written
