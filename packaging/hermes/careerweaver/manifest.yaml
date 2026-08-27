@@ -1,5 +1,7 @@
-# Submit as a PR adding this directory to hermes-agent/optional-mcps/.
-# Presence in that directory = approval (merged via PR review).
+# Nous-approved MCP catalog entry.
+# Presence in this directory = approval. Merged via PR review.
+#
+# Schema version 1.
 manifest_version: 1
 
 name: careerweaver
@@ -11,13 +13,36 @@ source: https://github.com/idea-torx/CareerWeaver
 # CareerWeaver runs entirely on the user's machine: weaver.db holds their career
 # facts and the fill step drives their own Chrome with their own logged-in ATS
 # sessions. Nothing is hosted, so there is no url — Hermes spawns the server.
+#
+# Published to PyPI, so uvx IS the install and no `install:` block is needed.
+# Pinned to an exact version per catalog policy; bumping the pin is a PR to
+# this manifest. `--from` is required because the package is `careerweaver`
+# but the entry point it installs is `weaver-mcp`.
 transport:
   type: stdio
-  command: weaver-mcp
+  command: uvx
+  args:
+    - "--from"
+    - "careerweaver==0.2.0"
+    - "weaver-mcp"
 
-# No account, no API key. The user's data never leaves their laptop.
+# No account and no API key — the user's data never leaves their laptop. This
+# is `api_key` only because that is the schema's install-time env prompt:
+# auth.type `none` prompts for nothing (install_entry), and WEAVER_DATA_DIR
+# cannot be defaulted here because it is an absolute per-machine path.
+#
+# It has to be prompted rather than documented. Hermes spawns this server with
+# its own working directory, and the CLI's default (./data) would resolve to a
+# fresh empty database with no error at all — the user would get a resume built
+# from zero facts instead of a failure. `required: true` fails the install
+# loudly instead.
 auth:
-  type: none
+  type: api_key
+  env:
+    - name: WEAVER_DATA_DIR
+      prompt: "Absolute path to your CareerWeaver data dir (the one holding weaver.db)"
+      required: true
+      secret: false
 
 suggest:
   keywords: [resume, job application, cover letter, ats, job search, apply]
@@ -28,15 +53,10 @@ suggest:
     - jobs.ashbyhq.com
 
 post_install: |
-  CareerWeaver is a local tool. Before Hermes can connect:
+  Populate the data directory you just pointed at, if you have not already:
 
-    1. pip install careerweaver      (puts `weaver-mcp` on PATH)
-    2. weaver init                   (creates ./data/weaver.db)
-    3. weaver seed-import <resume>   (populates the fact graph)
-    4. Set WEAVER_DATA_DIR to the ABSOLUTE path of that data dir in
-       mcp_servers.careerweaver.env — Hermes spawns this server with its own
-       working directory, and the CLI default (./data) would resolve to an
-       empty database with no error.
+    uvx --from careerweaver==0.2.0 weaver init
+    uvx --from careerweaver==0.2.0 weaver seed-import <your-resume>
 
   The fact graph is the safety mechanism: tailoring only ever draws on facts
   you imported, so it cannot invent experience you do not have.
@@ -46,3 +66,5 @@ post_install: |
   this server has no submit path at all.
 
   That fill drives a real browser and can run for minutes. Expect a slow call.
+
+  Start a new Hermes session to load the CareerWeaver tools.
