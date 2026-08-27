@@ -626,10 +626,11 @@ def cmd_apply(args: argparse.Namespace) -> int:
         ]
         return emit(args, data, human)
 
-    if not llm.api_key():
+    if not llm.available():
         return fail(
             args,
-            "WEAVER_API_KEY is not set — the local agent loop has no model. Re-run with --dry-run.",
+            "no model configured — set WEAVER_LLM_CMD (a local CLI) or "
+            "WEAVER_API_KEY (an HTTP endpoint). Re-run with --dry-run.",
             EXIT_USAGE,
         )
 
@@ -657,8 +658,9 @@ def cmd_apply(args: argparse.Namespace) -> int:
     if getattr(args, "tab", False):
         try:
             if _needs_real_chrome((job or {}).get("url") or ""):
-                # Workable is real-chrome-only: Turnstile at submit fails even
-                # a human inside the Playwright tab-host (see _ensure_real_chrome).
+                # Bot-walled ATS (workable, lever): the anti-bot check fails
+                # even for a human inside the Playwright tab-host — it must run
+                # in a real Chrome over CDP (see _ensure_real_chrome).
                 real_chrome_host = True
                 cdp_url = _ensure_real_chrome(_data_dir)
             else:
@@ -796,6 +798,12 @@ def cmd_apply(args: argparse.Namespace) -> int:
 #: browser: a human is reviewing the held tab, or the form is already sent.
 _BATCH_TERMINAL = frozenset({"held", "submitted", "applied"})
 
+#: Every state a ledger row may legitimately hold. `apps set-status` validates
+#: against this so a typo cannot invent a state the reports do not count.
+LEDGER_STATUSES = frozenset(
+    {"dry_run", "failed", "stopped", "audit_pending", "held", "submitted", "applied"}
+)
+
 
 def _take_batch_lock(data_dir: Path) -> tuple[Path, int | None]:
     """Single-flight lock for fill cycles: (lock_path, live_holder_pid|None).
@@ -843,19 +851,25 @@ _TAB_HOST_REMEDY = (
     "window once with `weaver tab-host`"
 )
 
-# ------------------------------------------------- real-chrome host (workable)
+# ------------------------------------------- real-chrome host (bot-walled ATSes)
 
-#: Workable puts Cloudflare Turnstile at submit, and Turnstile fails even a
-#: HUMAN clicking the checkbox inside the Playwright tab-host (2026-08-19
-#: Bridgit run: infinite re-challenge loop; the same form sent fine from a
-#: real Chrome attached over CDP). Workable fills are therefore routed to a
+#: Some ATSes run an anti-bot check that fails inside the Playwright tab-host
+#: and clears from a real Chrome attached over CDP. These fills are routed to a
 #: real Chrome instance — weaver still only fills and parks; the human answers
 #: the verification and presses send, as always.
+#:
+#: - workable: Cloudflare Turnstile at submit, which fails even a HUMAN clicking
+#:   the checkbox in the tab-host (2026-08-19 Bridgit run: infinite re-challenge
+#:   loop; the same form sent fine from a real Chrome).
+#: - lever: repeated CAPTCHA re-challenge on the apply page (2026-08-24 Metabase,
+#:   run 145 — the run never attached a resume and was abandoned).
 DEFAULT_REAL_CDP_PORT = 9223
 
+_REAL_CHROME_HOSTS = ("apply.workable.com", "jobs.lever.co")
+
 _REAL_CHROME_REMEDY = (
-    "workable forms verify at submit and need a real Chrome: install Google "
-    "Chrome, or pre-start one with --remote-debugging-port="
+    "some forms (workable, lever) verify you are human and need a real Chrome: "
+    "install Google Chrome, or pre-start one with --remote-debugging-port="
     f"{DEFAULT_REAL_CDP_PORT} and a dedicated --user-data-dir "
     "(WEAVER_REAL_CDP_PORT overrides the port)"
 )
@@ -876,8 +890,18 @@ _REAL_CHROME_FOREIGN_REMEDY = (
 _REAL_CHROME_RECORD = "real-chrome.pid"
 
 
+def _real_chrome_hosts() -> tuple[str, ...]:
+    """The bot-walled hosts, overridable per AGENTS.md rule 7 — a fresh clone
+    adds a provider via WEAVER_REAL_CHROME_HOSTS (comma-separated), not a patch.
+    An explicit set REPLACES the defaults; a blank one is an unset one."""
+    raw = os.environ.get("WEAVER_REAL_CHROME_HOSTS") or ""
+    hosts = tuple(h.strip().lower() for h in raw.split(",") if h.strip())
+    return hosts or _REAL_CHROME_HOSTS
+
+
 def _needs_real_chrome(job_url: str) -> bool:
-    return "apply.workable.com" in (job_url or "")
+    url = (job_url or "").lower()
+    return any(host in url for host in _real_chrome_hosts())
 
 
 def _real_chrome_port() -> int:
@@ -1089,7 +1113,7 @@ def _batch_run(
     #: fails every entry that needs it with the same remediation instead of N
     #: different-looking errors (and skip-only cycles never touch a browser).
     #: Two hosts exist: the Playwright tab-host, and a real Chrome for
-    #: workable entries (Turnstile-at-submit — see _ensure_real_chrome).
+    #: bot-walled entries (workable, lever — see _ensure_real_chrome).
     host_errors: dict[str, str | None] = {}
 
     def record(resume_id: int, outcome: str, reason: str, **extra: Any) -> None:
@@ -1418,6 +1442,49 @@ def cmd_apps_list(args: argparse.Namespace) -> int:
         )
         human.append(f"       {row['created_at']}  {row['resume_path'] or ''}")
     return emit(args, {"ok": True, "count": len(rows), "applications": rows}, human)
+
+
+def cmd_apps_set_status(args: argparse.Namespace) -> int:
+    """Reconcile a ledger row with what actually happened.
+
+    weaver parks a filled form and a HUMAN presses send — the engine never sees
+    that, so `held` rows stay `held` forever and the ledger drifts away from
+    reality. The alternative was hand-written UPDATEs against the live db, which
+    is how a ledger stops being worth reading.
+    """
+    _data_dir, conn, _config = open_db(args)
+    status = str(args.status or "").strip()
+    if status not in LEDGER_STATUSES:
+        return fail(
+            args,
+            f"unknown status {status!r} — use one of: {', '.join(sorted(LEDGER_STATUSES))}",
+            EXIT_USAGE,
+        )
+    app = db.get_application(conn, args.application_id)
+    if app is None:
+        return fail(args, f"no such application: {args.application_id}", EXIT_USAGE)
+    was = str(app.get("status") or "")
+    note = str(getattr(args, "note", "") or "").strip()
+    response = app.get("response")
+    response = dict(response) if isinstance(response, dict) else {}
+    # Append, never overwrite: the run's own response is evidence of what the
+    # engine did, and a later human correction must not erase it.
+    history = list(response.get("status_history") or [])
+    history.append({"from": was, "to": status, "at": db.now(), "note": note})
+    response["status_history"] = history
+    conn.execute(
+        "UPDATE applications SET status = ?, response = ? WHERE id = ?",
+        (status, json.dumps(response, ensure_ascii=False, default=str), args.application_id),
+    )
+    conn.commit()
+    human = [f"application #{args.application_id}: {was or '(none)'} → {status}"]
+    if note:
+        human.append(f"  note: {note}")
+    return emit(
+        args,
+        {"ok": True, "id": args.application_id, "was": was, "status": status, "note": note},
+        human,
+    )
 
 
 def cmd_apps_show(args: argparse.Namespace) -> int:
@@ -1956,6 +2023,20 @@ f"cap the agent loop (default {local_agent.DEFAULT_MAX_ACTIONS})"
     p_apps_show = apps_sub.add_parser("show", parents=[common])
     p_apps_show.add_argument("application_id", type=int)
     p_apps_show.set_defaults(func=cmd_apps_show)
+    p_apps_set = apps_sub.add_parser(
+        "set-status",
+        parents=[common],
+        help="record what really happened to an application (weaver cannot see a human send)",
+    )
+    p_apps_set.add_argument("application_id", type=int)
+    # Not argparse `choices=`: a typo must come back as weaver's own usage
+    # failure (JSON-shaped, EXIT_USAGE) like every other bad argument here,
+    # not argparse's bare exit-2 with no machine-readable error.
+    p_apps_set.add_argument("status", help=f"one of: {', '.join(sorted(LEDGER_STATUSES))}")
+    p_apps_set.add_argument(
+        "--note", default="", help="why it changed — kept on the row alongside the run's response"
+    )
+    p_apps_set.set_defaults(func=cmd_apps_set_status)
     p_apps.set_defaults(func=cmd_apps_list)
 
     p_ledger = sub.add_parser(

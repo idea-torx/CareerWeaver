@@ -11,6 +11,12 @@ a coherent default pair:
     WEAVER_API_KEY / OPENAI_API_KEY   your provider key
     WEAVER_BASE_URL / OPENAI_BASE_URL endpoint root (default: OpenAI)
     WEAVER_MODEL                      model id (must be set for a custom base url)
+    WEAVER_LLM_CMD                    a CLI to run instead of any HTTP endpoint
+
+`WEAVER_LLM_CMD` wins over all of the above: with it set weaver never opens a
+socket, it runs that argv, writes the prompt to stdin and reads the reply off
+stdout. The CLI brings its own auth and its own model flag, so no key and no
+base url are needed (or consulted). See `cli_command`.
 
 The default model and the default base url are chosen as a matched pair. Point
 `WEAVER_BASE_URL` somewhere else and you MUST also set `WEAVER_MODEL` — a model
@@ -24,6 +30,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
+import subprocess
 import sys
 import urllib.error
 import urllib.request
@@ -32,6 +40,10 @@ from typing import Any
 #: Matched pair — this model id is valid at this base url. Change one, change both.
 DEFAULT_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_MODEL = "gpt-4o-mini"
+
+#: What separates the system half of a prompt from the user half when the
+#: provider is a CLI (one stdin stream, not two message roles).
+CLI_PROMPT_SEPARATOR = "\n\n---\n\n"
 
 CONFIG_HINT = (
     "set WEAVER_MODEL and WEAVER_BASE_URL (plus WEAVER_API_KEY) — a custom "
@@ -59,8 +71,50 @@ def attribution_headers() -> dict[str, str]:
     }
 
 
+def cli_command() -> list[str] | None:
+    """The local CLI that answers prompts, from `WEAVER_LLM_CMD`. None = HTTP.
+
+    Set it and weaver stops speaking HTTP entirely — no base url, no api key,
+    since a CLI carries its own auth. The value is a full argv (shell-quoted):
+    weaver adds no flags of its own, pipes `system + user` to stdin, and reads
+    the reply off stdout. Any CLI with those manners works.
+    """
+    raw = (os.environ.get("WEAVER_LLM_CMD") or "").strip()
+    return shlex.split(raw) if raw else None
+
+
+def cli_complete(system: str, user: str, timeout_s: float | None = None) -> dict[str, Any] | None:
+    """Ask the configured CLI for a JSON object. Raises if the call fails."""
+    argv = cli_command()
+    if not argv:
+        raise RuntimeError("no LLM CLI — set WEAVER_LLM_CMD")
+    done = subprocess.run(  # noqa: S603 - argv comes from the operator's own env
+        argv,
+        input=system + CLI_PROMPT_SEPARATOR + user,
+        capture_output=True,
+        text=True,
+        timeout=timeout_s if timeout_s is not None else timeout(),
+    )
+    if done.returncode != 0:
+        detail = (done.stderr or done.stdout or "").strip()
+        raise RuntimeError(f"llm cli exited {done.returncode}: {detail[:300]}")
+    return parse_json_object(done.stdout)
+
+
+def available() -> bool:
+    """Is a real model reachable at all? A CLI needs no key; HTTP does.
+
+    Every caller that used to ask `api_key()` really meant this: "can I get a
+    model, or must I fall back to the deterministic path?" Asking for the key
+    directly locks weaver out of any provider that does not carry one.
+    """
+    return bool(cli_command() or api_key())
+
+
 def provider_name() -> str:
-    """'openai' when a key is configured, else 'deterministic'."""
+    """'cli' when a CLI is configured, 'openai' with a key, else 'deterministic'."""
+    if cli_command():
+        return "cli"
     return "openai" if api_key() else "deterministic"
 
 
@@ -70,7 +124,11 @@ def api_key() -> str | None:
 
 
 def model() -> str:
-    return (os.environ.get("WEAVER_MODEL") or "").strip() or DEFAULT_MODEL
+    """The model id, or "" when the CLI picks its own (its argv carries it)."""
+    configured = (os.environ.get("WEAVER_MODEL") or "").strip()
+    if configured:
+        return configured
+    return "" if cli_command() else DEFAULT_MODEL
 
 
 def base_url() -> str:
@@ -88,6 +146,8 @@ def config_error() -> str | None:
     The only incoherent case is a custom base url with no model id: we would be
     sending `DEFAULT_MODEL` (an OpenAI model) to somebody else's endpoint.
     """
+    if cli_command():
+        return None
     if base_url() != DEFAULT_BASE_URL and not (os.environ.get("WEAVER_MODEL") or "").strip():
         return (
             f"WEAVER_BASE_URL is {base_url()} but WEAVER_MODEL is unset, so the "
@@ -111,6 +171,16 @@ def deterministic_fallback(reason: str = "no api key") -> dict[str, Any]:
 
 def complete_json(system: str, user: str) -> dict[str, Any]:
     """Ask the model for a JSON object. Never raises."""
+    if cli_command():
+        try:
+            parsed = cli_complete(system, user)
+        except (OSError, subprocess.SubprocessError, RuntimeError) as exc:
+            return deterministic_fallback(f"cli error: {type(exc).__name__}: {exc}")
+        if parsed is None:
+            return deterministic_fallback("cli returned unparseable JSON")
+        parsed.setdefault("provider", "cli")
+        return parsed
+
     key = api_key()
     if not key:
         return deterministic_fallback(f"no api key — {CONFIG_HINT}")
@@ -176,10 +246,12 @@ def parse_json_object(content: str) -> dict[str, Any] | None:
 
 def describe() -> dict[str, Any]:
     """Provider config for `--json` output (never leaks the key)."""
+    cli = cli_command()
     return {
         "provider": provider_name(),
-        "model": model() if api_key() else None,
-        "base_url": base_url() if api_key() else None,
+        "model": model() if (api_key() or cli) else None,
+        "base_url": None if cli else (base_url() if api_key() else None),
+        "cli": cli[0] if cli else None,
         "key_present": bool(api_key()),
         "config_error": config_error(),
     }

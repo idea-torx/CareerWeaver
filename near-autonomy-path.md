@@ -35,4 +35,4 @@ form ~99% in VISIBLE Chrome, pauses at a human seam (CAPTCHA / review). CLI:
 + presses send. This is the "wake up and press send" flow.
 
 Build order: Lane 1 now -> Lane 2 -> wire `morning`. Lane 3 (fill) continues to fine
-tune via GLM/Claude audits.
+tune via independent second-model audits.

@@ -283,7 +283,7 @@ weaver batch 12 13 --json          # one JSON doc on stdout, blocks on stderr
 weaver cycle --count 5 --wide --json
 ```
 
-* Credentials without a shell: put `KEY=VALUE` lines in `<data-dir>/env` (`data/env` by default, gitignored) — `WEAVER_API_KEY`, `WEAVER_BASE_URL`, `WEAVER_MODEL` etc. Real env vars always win. `export` prefixes and quotes are tolerated.
+* Credentials without a shell: put `KEY=VALUE` lines in `<data-dir>/env` (`data/env` by default, gitignored) — `WEAVER_API_KEY`, `WEAVER_BASE_URL`, `WEAVER_MODEL`, or `WEAVER_LLM_CMD` (a local CLI instead of an endpoint). Real env vars always win. `export` prefixes and quotes are tolerated.
 * Absolute binary for launchers: `<repo>/.venv/bin/weaver`
 * One argv, no shell: `cycle` is designed for harnesses that can only run a single command with a bare environment (cron, gated launchers) — no `source`, `&&`, or pipes required.
 * `WEAVER_PROFILE_*` env vars set any profile field without a flag (e.g. `WEAVER_PROFILE_EMAIL`).

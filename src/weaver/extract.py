@@ -569,7 +569,7 @@ def import_document(conn: sqlite3.Connection, path: Path, use_llm: bool = True) 
     lines = read_lines(path)
     doc: ParsedDoc | None = None
     provider = "deterministic"
-    if use_llm and llm.api_key():
+    if use_llm and llm.available():
         doc = llm_structure(lines, source)
         if doc is not None:
             provider = "openai"

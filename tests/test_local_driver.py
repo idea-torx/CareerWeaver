@@ -998,15 +998,20 @@ def test_click_refuses_a_disabled_or_missing_target(page: Any) -> None:
 # ---------------------------------------------------------------------- upload
 
 
-def test_upload_attaches_the_resume_and_the_page_confirms_it(page: Any, tmp_path: Path) -> None:
+def test_upload_attaches_the_resume_to_the_input(page: Any, tmp_path: Path) -> None:
+    """Renamed 2026-08-24: this form renders no chip, so the page never confirmed
+    anything — the old name ("...and the page confirms it") described a check
+    `upload` was not doing. It attaches, and that is now said precisely."""
     resume = tmp_path / "mira-halloway-resume.docx"
     resume.write_bytes(b"PK\x03\x04 docx bytes")
     driver = driver_for(page, PLAIN_FORM, resume_path=resume)
+    driver.UPLOAD_CONFIRM_TIMEOUT_MS = 0
     ref = next(f["ref"] for f in driver.snapshot()["fields"] if f["type"] == "file")
 
     result = driver.upload(ref)
 
-    assert result == {"ok": True, "note": "attached mira-halloway-resume.docx"}
+    assert result["ok"] is True and result["verified"] == "input-only"
+    assert "attached mira-halloway-resume.docx" in result["note"]
     # no claim without verification — read the attachment back off the page
     attached = page.evaluate(local_driver.ATTACHED_JS, {"target": ref})
     assert attached == {"ok": True, "note": "attached mira-halloway-resume.docx"}
@@ -1668,3 +1673,158 @@ def test_an_iframe_embedded_application_form_is_driven_inside_its_frame(
 
     # Buttons inside the frame are surfaced to the model, not hidden by SOP.
     assert any(b["text"] == "Submit Application" for b in driver.snapshot()["buttons"])
+
+
+# ------------------------------------------- upload verification (hard rule 2)
+
+#: An ATS that ACCEPTS the file names it back — greenhouse/lever/ashby all
+#: render a chip from their change handler. This is the only signal that says
+#: the ATS (not merely the DOM) took the file.
+CHIP_FORM = """
+<!doctype html><html><body>
+  <form>
+    <label>Resume/CV</label>
+    <div class="upload">
+      <input id="resume" name="resume" type="file">
+      <div id="chip"></div>
+    </div>
+  </form>
+  <script>
+    document.querySelector('#resume').addEventListener('change', (ev) => {
+      const f = ev.target.files && ev.target.files[0];
+      document.querySelector('#chip').textContent = f ? ('Attached: ' + f.name) : '';
+    });
+  </script>
+</body></html>
+"""
+
+#: The run-145 shape: the input takes the file, the page never acknowledges it.
+#: A dropzone whose handler is broken/blocked looks EXACTLY like this.
+SILENT_FORM = """
+<!doctype html><html><body>
+  <form>
+    <label>Resume/CV</label>
+    <div class="upload"><input id="resume" name="resume" type="file"></div>
+  </form>
+</body></html>
+"""
+
+
+def _file_ref(driver: LocalDriver) -> str:
+    return next(f["ref"] for f in driver.snapshot()["fields"] if f["type"] == "file")
+
+
+def test_upload_confirmed_by_the_page_is_marked_rendered(page: Any, tmp_path: Path) -> None:
+    resume = tmp_path / "mira-halloway-resume.docx"
+    resume.write_bytes(b"PK\x03\x04 docx bytes")
+    driver = driver_for(page, CHIP_FORM, resume_path=resume)
+
+    result = driver.upload(_file_ref(driver))
+
+    assert result["ok"] is True
+    assert result["verified"] == "rendered"
+    assert "mira-halloway-resume.docx" in result["note"]
+
+
+def test_upload_without_page_confirmation_is_input_only(page: Any, tmp_path: Path) -> None:
+    """Run 145's real state. It stays ok (plenty of ATSes render no chip) but it
+    must NOT be indistinguishable from a confirmed attach."""
+    resume = tmp_path / "mira-halloway-resume.docx"
+    resume.write_bytes(b"PK\x03\x04 docx bytes")
+    driver = driver_for(page, SILENT_FORM, resume_path=resume)
+    driver.UPLOAD_CONFIRM_TIMEOUT_MS = 0  # do not spend the real poll in tests
+
+    result = driver.upload(_file_ref(driver))
+
+    assert result["ok"] is True
+    assert result["verified"] == "input-only"
+    assert "never named it back" in result["note"]
+
+
+def test_upload_that_does_not_stick_is_not_ok(page: Any, tmp_path: Path) -> None:
+    """Run 145's LIE: set_input_files returned without raising and the engine
+    reported `ok=true — attached …docx` on a form that had no resume. A
+    non-raising attach is not evidence; the input holding the file is."""
+    resume = tmp_path / "mira-halloway-resume.docx"
+    resume.write_bytes(b"PK\x03\x04 docx bytes")
+    driver = driver_for(page, SILENT_FORM, resume_path=resume)
+    ref = _file_ref(driver)
+
+    real_frame_for = driver._frame_for
+
+    class _LyingFrame:
+        """Accepts the attach, drops the file — a wall/challenge mid-attach."""
+
+        def __init__(self, inner: Any) -> None:
+            self._inner = inner
+
+        def set_input_files(self, *_a: Any, **_k: Any) -> None:
+            return None  # "succeeded", attached nothing
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self._inner, name)
+
+    driver._frame_for = lambda target: _LyingFrame(real_frame_for(target))  # type: ignore[method-assign]
+    result = driver.upload(ref)
+
+    assert result["ok"] is False
+    assert "did not stick" in result["note"]
+    assert "verified" not in result
+
+
+def test_the_inputs_own_fakepath_value_is_not_page_confirmation(
+    page: Any, tmp_path: Path
+) -> None:
+    """Every successful attach leaves the basename in the input's OWN value —
+    Chrome sets it to "C:\\fakepath\\<name>". A confirmation probe that scanned
+    input values would therefore call every silent form confirmed, which is the
+    exact false-success this patch exists to kill. Only text the PAGE rendered
+    counts."""
+    resume = tmp_path / "mira-halloway-resume.docx"
+    resume.write_bytes(b"PK\x03\x04 docx bytes")
+    driver = driver_for(page, SILENT_FORM, resume_path=resume)
+    ref = _file_ref(driver)
+    driver.UPLOAD_CONFIRM_TIMEOUT_MS = 0
+    driver.upload(ref)
+
+    # the vector is real — guard against the premise rotting
+    value = page.evaluate("() => document.querySelector('#resume').value")
+    assert "mira-halloway-resume.docx" in value
+    # ...and the probe must still report no page-level confirmation
+    echo = page.evaluate(
+        local_driver.UPLOAD_CONFIRMED_JS,
+        {"target": ref, "name": "mira-halloway-resume.docx"},
+    )
+    assert not echo
+
+
+def test_a_filename_stem_matching_the_forms_own_label_is_not_confirmation(
+    page: Any, tmp_path: Path
+) -> None:
+    """Caught while building this patch: matching the filename STEM made
+    "cover.docx" confirm against the page's own "Cover letter" label, and
+    "resume.docx" would confirm against "Resume/CV". That is a false success on
+    every form, which is precisely what upload verification exists to prevent.
+    Only the full filename counts."""
+    cover = tmp_path / "cover.docx"
+    cover.write_bytes(b"cover")
+    page.set_content(
+        '<form><div><label>Cover letter</label>'
+        '<input id="c" name="c" type="file"></div></form>'
+    )
+    page.set_input_files("#c", str(cover))
+
+    echo = page.evaluate(
+        local_driver.UPLOAD_CONFIRMED_JS, {"target": "#c", "name": "cover.docx"}
+    )
+    assert not echo, f"the label matched the stem and posed as confirmation: {echo!r}"
+
+    # ...while a real chip carrying the full filename still confirms
+    page.evaluate(
+        "() => { const d = document.createElement('div');"
+        " d.textContent = 'Attached: cover.docx';"
+        " document.querySelector('form div').appendChild(d); }"
+    )
+    assert page.evaluate(
+        local_driver.UPLOAD_CONFIRMED_JS, {"target": "#c", "name": "cover.docx"}
+    )

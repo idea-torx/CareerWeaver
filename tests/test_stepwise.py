@@ -1052,3 +1052,62 @@ def test_a_wizard_that_reaches_the_end_never_claims_a_submission_it_did_not_make
     assert result["status"] == "stopped"
     assert result["status"] != "applied"
     assert "no confirmation message was visible" in str(result["reason"])
+
+
+# ----------------------------- (7) an overview page in front of the real form
+
+
+def test_an_overview_page_hands_off_to_the_separate_application_form() -> None:
+    """Ashby's two-step shape: a job overview whose only control is `Apply for
+    this Job`, and the form on a separate `/application` route.
+
+    `Apply for this Job` is deliberately NOT a forward control (it is the same
+    text a page-wide "apply" link carries), so the handoff runs through the
+    mid-batch transition instead: the click's own re-read sees the new route,
+    drops the rest of the batch, and the next round's opening snapshot clears
+    the per-field state — BOTH stamped at the same action index. The engine
+    must then re-read and fill the form it landed on.
+
+    Pinned after the 2026-08-26 Endex stall, where this shape looked like the
+    culprit and was not: the navigation is sound, the 907s was the relay
+    (`test_a_call_that_ran_out_the_clock_is_not_re_sent_for_another_full_timeout`).
+    """
+    overview = "https://jobs.ashbyhq.com/endex/0a7a58c3"
+    driver = WizardDriver(
+        [
+            Step(
+                overview,
+                [],
+                [{"ref": "b16", "text": "Apply for this Job", "type": "button"}],
+                forward="b16",
+                text="Endex is hiring a Founding Designer.",
+            ),
+            Step(
+                f"{overview}/application",
+                [field("f0", "Name", required=True),
+                 field("f1", "Email", type="email", required=True)],
+                [{"ref": "b0", "text": "Submit Application", "type": "submit"}],
+            ),
+        ]
+    )
+    chat = scripted(
+        [
+            {"actions": [{"action": "click", "target": "b16"}]},
+            {"actions": [{"action": "type", "target": "f0", "text": "Mira Halloway"},
+                         {"action": "type", "target": "f1", "text": "mira@halloway.example"}]},
+            {"actions": [{"action": "stop", "text": "held for audit"}]},
+        ]
+    )
+    result = run(driver, chat, hold=True)
+
+    drops = [e for e in result["trace"] if "mid-batch" in str(e["note"])]
+    clears = [e for e in result["trace"] if "cleared the per-field engine state" in str(e["note"])]
+    assert len(drops) == 1 and len(clears) == 1
+    assert drops[0]["n"] == clears[0]["n"] == 1, "both fire on the same action index"
+    # ...and the round after them is a real think turn, not the end of the run.
+    assert [e["action"] for e in result["trace"]].count("think") == 3
+    assert driver.values_on("/application") == {
+        "Name": "Mira Halloway",
+        "Email": "mira@halloway.example",
+    }
+    assert result["status"] == local_agent.AUDIT_PENDING

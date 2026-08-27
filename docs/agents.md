@@ -36,6 +36,19 @@ WEAVER_TEMPERATURE=0.3
 WEAVER_TIMEOUT=60
 ```
 
+**Or no endpoint at all** — point weaver at a local CLI and it never opens a
+socket:
+
+```
+WEAVER_LLM_CMD=/path/to/some-cli --print --model their-model-id
+```
+
+`WEAVER_LLM_CMD` wins over every variable above. Weaver runs that argv verbatim
+(adding no flags of its own), pipes `system + "\n\n---\n\n" + user` to stdin,
+and parses the JSON object it finds on stdout. The CLI brings its own auth and
+its own model flag, so no key and no base url are needed or consulted — put any
+system-prompt or output-format flags the CLI needs into the argv itself.
+
 * Real environment variables always win over the file.
 * `export` prefixes and surrounding quotes are tolerated — copy an existing shell env file unchanged.
 * The key **never prints**; `weaver stats --json` reports `llm.key_present` only.
@@ -223,7 +236,7 @@ Read `AGENTS.md` before touching code — it encodes the safety rules:
 5. **`uv run pytest` must be fully green.** No red suites. Tests must pass with no keys, no network, on a fresh clone.
 6. **Never commit PII.** `data/`, `seed_resumes/`, `config.json`, keys are local-only. Audit with `git ls-files | grep` for names/emails/paths.
 7. **Cost-light.** Cheap model for breadth, expensive only for the single highest-leverage step. No hardcoded provider/account/user — everything overridable via env/config.
-8. **Build → audit → test.** Written contract → single-concern patch + regression test → independent audit (cheap GLM/opencode or Opus) → green tests → real run.
+8. **Build → audit → test.** Written contract → single-concern patch + regression test → independent audit by a different model than the builder → green tests → real run.
 
 Contracts live as `.md` working files **in the repo** so agents can read them without sandbox permission issues. Diagnose failures from direct evidence (`data/traces/*.jsonl`, `data/weaver.db` `applications`) before changing code.
 

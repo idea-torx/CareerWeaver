@@ -59,8 +59,21 @@ DETACH_RETRIES = 3
 #: escalation / budget) may park a run at `audit_pending`.
 STOP_NUDGE_LIMIT = 3
 #: A think turn slower than this is a slow relay, not a hang: it gets a visible
-#: note, and — if it FAILED that slowly — one retry before the run gives up.
+#: note, and — if it FAILED that slowly — the turn is re-sent before the run
+#: gives up.
+#: ponytail: this threshold is independent of the per-call timeout in
+#: `make_chat`. A caller-supplied `timeout_ms` below 45s would make every
+#: timed-out attempt look "fast" and skip the retry entirely; nothing in-tree
+#: does that (DEFAULT_TIMEOUT_MS is 300s). Couple them if a short-timeout
+#: config ever ships.
 SLOW_TURN_MS = 45_000
+#: How many times `think` may send one turn at the relay. Each attempt costs at
+#: most one `make_chat` per-call timeout (300s), because a call that ran out
+#: the clock is no longer re-sent inside `chat` (see `make_chat`). 4 * 300s =
+#: 1200s worst case, against 1814s before that guard existed. The number is
+#: evidence, not taste: on 2026-08-26 both runs that filled a form (Owner,
+#: Daydream) did it on the 4th relay round-trip, after 907s of timeouts.
+THINK_ATTEMPTS = 4
 #: How often the "thinking… 24s" heartbeat prints while a turn is in flight.
 PROGRESS_TICK_MS = 10_000
 #: A step-by-step form is a state GRAPH, not one page. After a forward control
@@ -1904,31 +1917,42 @@ def think(
     user: str,
     progress: Callable[[str], None] | None = None,
     tick_ms: int = PROGRESS_TICK_MS,
-    slow_ms: int = SLOW_TURN_MS,
+    slow_ms: int | None = None,
     clock: Callable[[], float] = time.monotonic,
+    attempts: int | None = None,
 ) -> tuple[Any, int, str]:
-    """One model turn, with a heartbeat and one retry for a slow FAILED turn.
+    """One model turn, with a heartbeat and retries for a slow FAILED turn.
 
     A 35s think turn on a slow relay is progress, not a hang — it gets a visible
     "thinking… 20s" line every tick and a `slow turn` note in the trace. If a
-    turn that slow raises (the relay dropped it), the turn is retried ONCE
-    before the run is allowed to fail.
+    turn that slow raises (the relay dropped it), the turn is re-sent, up to
+    `THINK_ATTEMPTS` times, before the run is allowed to fail. This is the whole
+    retry budget for a turn: `chat` stops re-sending a body that already spent
+    the per-call timeout, so one think attempt is one relay timeout.
+
+    A FAST failure is a real failure (bad key, 4xx, refused): `chat` already
+    burned its own attempts on it, so it is raised, not re-sent.
+
+    `slow_ms` / `attempts` default to the module constants at CALL time, so
+    changing the constant actually changes behaviour.
 
     Returns `(raw_reply, elapsed_ms, note)`; `note` is "" for a normal turn.
     """
     emit = progress or (lambda _line: None)
+    slow_ms = SLOW_TURN_MS if slow_ms is None else slow_ms
+    tries = max(1, THINK_ATTEMPTS if attempts is None else attempts)
     retried = ""
-    for attempt in range(2):
+    for attempt in range(tries):
         started = clock()
         stop, thread = _heartbeat(emit, tick_ms, clock)
         try:
             raw = chat(system, user)
         except Exception as exc:
             elapsed_ms = int((clock() - started) * 1000)
-            if attempt == 0 and elapsed_ms >= slow_ms:
+            if attempt + 1 < tries and elapsed_ms >= slow_ms:
                 retried = (
-                    f"slow turn ({elapsed_ms // 1000}s) failed — retrying once "
-                    f"before giving up: {_describe(exc)}"
+                    f"slow turn ({elapsed_ms // 1000}s) failed — retrying "
+                    f"({attempt + 2}/{tries}) before giving up: {_describe(exc)}"
                 )
                 emit(retried)
                 continue
@@ -1991,6 +2015,10 @@ def run_apply(
     #: "Label = value" for every value VERIFIED to have landed, carried across
     #: steps so the model never re-asks a question it already answered.
     answered_fields: list[str] = []
+    #: Notes from resume uploads that reached the input but were never
+    #: acknowledged by the ATS. Non-empty means the park is an AUDIT, not a
+    #: ready-to-send hold — see the park sites below (run 145, Metabase).
+    unconfirmed_uploads: list[str] = []
     #: fingerprint|control → how many times that forward click changed nothing.
     nav_stalls: dict[str, int] = {}
     #: How many steps the ENGINE advanced on its own.
@@ -2015,9 +2043,15 @@ def run_apply(
     #: the moment it happens; a kill can no longer erase what the run did.
     trace_file = trace_file or os.environ.get("WEAVER_TRACE_FILE") or ""
 
-    def push(action: str, target: str, ok: bool, note: str) -> None:
+    def push(action: str, target: str, ok: bool, note: str, verified: str = "") -> None:
         entry = {"n": n, "action": action, "target": target, "ok": ok, "note": note,
                  "url": (state or {}).get("url")}
+        # An upload's verification strength travels with the trace: "attached"
+        # and "attached, but the ATS never acknowledged it" are different
+        # findings, and a post-mortem must not have to re-run to tell them
+        # apart (run 145, Metabase 2026-08-24).
+        if verified:
+            entry["verified"] = verified
         trace.append(entry)
         if trace_file:
             with contextlib.suppress(Exception):
@@ -2067,6 +2101,25 @@ def run_apply(
             "screenshot_b64": last_screenshot or "",
         }
 
+    def park(note: str, **fields: str) -> None:
+        """Park a `--hold` run, and say honestly what kind of park it is.
+
+        `hold` is the kind the ledger records as "held" — filled, ready for the
+        human to send. A run whose resume the form never acknowledged has not
+        earned that word: it parks under its own kind so `ledger.hold_status`
+        leaves it at `audit_pending`, and the reason names the file so the human
+        checks the upload before sending (run 145, Metabase 2026-08-24).
+        """
+        if not unconfirmed_uploads:
+            escalate("hold", note, **fields)
+            return
+        escalate(
+            "upload_unconfirmed",
+            f"{note} — BUT the form never confirmed the resume: "
+            f"{unconfirmed_uploads[0]} — check the upload before sending",
+            **fields,
+        )
+
     def note_step(observed: dict[str, Any] | None) -> None:
         """Append this page state to the durable navigation memory."""
         print_ = page_fingerprint(observed)
@@ -2094,9 +2147,17 @@ def run_apply(
         """Evidence at least one applicant value reached the form: a verified
         answer, or an ok type/upload action. Every hold park consults this —
         "FILLED + HELD" with zero landed values is the false-success family
-        (Brex nav stops, then the Ashby listing submit-block, runs 121-124)."""
+        (Brex nav stops, then the Ashby listing submit-block, runs 121-124).
+
+        An `input-only` upload is NOT such evidence: the file is on the input
+        and the ATS never acknowledged it, which is precisely the state run 145
+        parked in while reporting a filled form.
+        """
         return bool(answered_fields) or any(
-            t.get("ok") and t.get("action") in ("type", "upload") for t in trace
+            t.get("ok")
+            and t.get("action") in ("type", "upload")
+            and t.get("verified") != "input-only"
+            for t in trace
         )
 
     def verify_batch(
@@ -2636,7 +2697,7 @@ def run_apply(
                     # A held run's stop is the PARK: the form is as filled as it
                     # gets, the human audits it in the open window and sends.
                     push("stop", action.get("target") or "", True, f"held for audit: {reason}")
-                    escalate("hold", f"held for audit (--hold): {reason}")
+                    park(f"held for audit (--hold): {reason}")
                     done = True
                     break
                 status = "stopped"
@@ -2689,8 +2750,7 @@ def run_apply(
                     break
                 note = "form filled — submit blocked (--hold); the human audits and sends"
                 push("click", action.get("target") or "", False, note)
-                escalate(
-                    "hold",
+                park(
                     note,
                     label=action.get("target") or "",
                     ref=action.get("target") or "",
@@ -2840,7 +2900,24 @@ def run_apply(
                     f"answers. Re-type a COMPLETE answer that fits within {clipped} characters",
                 )
             else:
-                push(action["action"], target, bool(result.get("ok")), str(result.get("note") or ""))
+                push(
+                    action["action"],
+                    target,
+                    bool(result.get("ok")),
+                    str(result.get("note") or ""),
+                    verified=str(result.get("verified") or ""),
+                )
+            # A resume the ATS never acknowledged is the run-145 failure: the
+            # file sat on the input, the form had nothing, and the run parked
+            # looking clean. Remember it so the park can say so. A cover letter
+            # is optional — an unconfirmed one is not worth an audit.
+            if (
+                action["action"] == "upload"
+                and result.get("ok")
+                and result.get("verified") == "input-only"
+                and not result.get("cover")
+            ):
+                unconfirmed_uploads.append(str(result.get("note") or "").strip())
             if action["action"] == "type" and result.get("ok"):
                 batch_types.append(
                     (
@@ -3072,13 +3149,14 @@ def _preview(value: Any) -> str:
 
 
 # --------------------------------------------------------------------------
-# The model, over the opencode-go relay.
+# The model, over whatever provider is configured (HTTP relay or local CLI).
 # --------------------------------------------------------------------------
 
-#: Per-turn LLM timeout. Local relays (opencode-go → deepseek/glm) routinely
-#: think for 30-40s on a long form and a batch reply can run minutes; 120s was
-#: cutting live turns off, so the ceiling is 5 minutes and the heartbeat (see
-#: `think`) is what tells the human it is alive.
+#: Per-turn LLM timeout. A slow relay routinely thinks for 30-40s on a long
+#: form and a batch reply can run minutes; 120s was cutting live turns off, so
+#: the ceiling is 5 minutes and the heartbeat (see `think`) is what tells the
+#: human it is alive. A CLI provider (`WEAVER_LLM_CMD`) uses it as its
+#: subprocess timeout and never retries — it fails fast and loudly instead.
 DEFAULT_TIMEOUT_MS = 300_000
 #: Transient relay slowness (queue + generation) — retry before giving up.
 MAX_ATTEMPTS = 3
@@ -3105,9 +3183,19 @@ def make_chat(
     config: dict[str, Any] | None = None,
     urlopen: Callable[..., Any] | None = None,
     sleep: Callable[[float], None] = sleep_ms,
+    clock: Callable[[], float] = time.monotonic,
 ) -> Callable[[str, str], dict[str, Any] | None]:
-    """A `chat(system, user) -> dict` over an OpenAI-compatible endpoint."""
+    """A `chat(system, user) -> dict` over the configured provider.
+
+    `WEAVER_LLM_CMD` (a local CLI) short-circuits everything below; without it
+    this is the OpenAI-compatible HTTP path.
+    """
     conf = dict(config or llm_config())
+    timeout_s = float(conf.get("timeout_ms") or DEFAULT_TIMEOUT_MS) / 1000.0
+    if llm.cli_command():
+        # A CLI provider needs no url, no key and no retry ladder of its own:
+        # it fails fast and loudly, and `think` already retries the turn.
+        return lambda system, user: llm.cli_complete(system, user, timeout_s)
     open_url = urlopen or urllib.request.urlopen
     base = str(conf.get("base_url") or "").rstrip("/")
     if not base:
@@ -3115,7 +3203,6 @@ def make_chat(
     if not conf.get("api_key"):
         raise RuntimeError("no LLM key — set WEAVER_API_KEY (or OPENAI_API_KEY) for the agent loop")
     attempts = max(1, int(conf.get("max_attempts") or MAX_ATTEMPTS))
-    timeout_s = float(conf.get("timeout_ms") or DEFAULT_TIMEOUT_MS) / 1000.0
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {conf['api_key']}",
@@ -3137,8 +3224,21 @@ def make_chat(
         ).encode("utf-8")
 
         last_error: Exception | None = None
+        started = clock()
         for attempt in range(attempts):
             if attempt:
+                # A retry is only worth taking while the turn still has time to
+                # spend. An attempt that ran out the clock (a read timeout) has
+                # already cost the FULL per-call budget, and re-sending the
+                # identical body to the same relay buys nothing — three of them
+                # is 907s of trace silence with the browser parked on a loaded
+                # form (2026-08-26: Endex killed at 13min, Daydream and Owner
+                # both logged "slow turn (907s) failed"). Stop here instead and
+                # let `think` announce the failure and retry the turn once.
+                # Failures that come back fast (connection refused, 429/5xx)
+                # cost nothing and still get every attempt.
+                if clock() - started >= timeout_s:
+                    break
                 sleep(RETRY_BACKOFF_MS[min(attempt - 1, len(RETRY_BACKOFF_MS) - 1)])
             request = urllib.request.Request(
                 f"{base}/chat/completions", data=body, headers=headers, method="POST"

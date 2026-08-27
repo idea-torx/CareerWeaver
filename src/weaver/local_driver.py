@@ -902,6 +902,47 @@ CONFIRMATION_JS = r"""(payload) => {
 }"""
 
 
+#: Did the PAGE acknowledge the attachment? An ATS that accepted the file names
+#: it back (greenhouse/lever/ashby all render a chip from their change handler).
+#: This is a different, stronger claim than ATTACHED_JS: that one says the DOM
+#: holds the file, this one says the application form noticed.
+#:
+#: Reads textContent, and only of ANCESTORS — never element values or
+#: attributes. Chrome sets the file input's own `value` to "C:\fakepath\<name>"
+#: on every successful attach, so a probe that scanned values would call every
+#: silent form confirmed and reinstate the bug this exists to catch.
+UPLOAD_CONFIRMED_JS = r"""(payload) => {
+  const doc = globalThis.document;
+  const sel = /^[fb]\d+$/.test(payload.target)
+    ? `[data-weaver-ref="${payload.target}"]` : payload.target;
+  let el = null;
+  try { el = doc.querySelector(sel); } catch (err) { return ''; }
+  if (!el) return '';
+  const name = String(payload.name || '').trim().toLowerCase();
+  // The FULL filename, extension included — never the stem. A stem needle
+  // matches the form's own furniture: "cover.docx" hits the "Cover letter"
+  // label, "resume.docx" hits "Resume/CV", and the probe reports a confirmed
+  // upload for a form that acknowledged nothing. Under-claiming (a truncated
+  // chip reads as input-only) is the safe direction; this is not.
+  const needles = [name].filter((s) => s.length >= 5);
+  if (!needles.length) return '';
+  let node = el.parentElement;
+  let hops = 0;
+  while (node && hops < 6) {
+    const text = String(node.textContent || '').replace(/\s+/g, ' ').trim();
+    const hay = text.toLowerCase();
+    for (let i = 0; i < needles.length; i++) {
+      const at = hay.indexOf(needles[i]);
+      if (at !== -1) return text.slice(Math.max(0, at - 60), at + 120).trim();
+    }
+    if (String(node.tagName || '').toUpperCase() === 'FORM') break;
+    node = node.parentElement;
+    hops++;
+  }
+  return '';
+}"""
+
+
 #: The question text around a file input — which file does THIS input want?
 NEARBY_TEXT_JS = r"""(payload) => {
   const sel = /^[fb]\d+$/.test(payload.target)
@@ -1645,6 +1686,61 @@ class LocalDriver:
                 result["note"] = f"{result.get('note') or 'clicked'} — state: {pressed}"
         return result
 
+    #: How long to wait for the ATS to echo the filename back. The parse is
+    #: async — lever posts the file, then re-renders — so an immediate read is
+    #: too early. Bounded low: a form that renders no chip must not stall.
+    UPLOAD_CONFIRM_TIMEOUT_MS = 2500
+    UPLOAD_CONFIRM_POLL_MS = 250
+
+    def _verify_upload(self, sel: str, path: str, is_cover: bool) -> dict[str, Any]:
+        """Prove the attachment landed — hard rule 2 covers files too.
+
+        Run 145 (Metabase, 2026-08-24) traced `upload f0 ok=true — attached
+        <applicant-resume>.docx` on a form that had no resume on it: `set_input_files` returning without raising was treated as
+        evidence. It is not. Every later action in that run reasoned about a
+        page state that did not exist.
+
+        Two signals, deliberately NOT collapsed into one boolean:
+          - the input holding the file  -> the DOM accepted it
+          - the page naming the file    -> the ATS accepted it
+        The second can be absent on a perfectly good form (plenty render no
+        chip), so it downgrades rather than fails — but it never reads the same
+        as a confirmed attach.
+        """
+        name = Path(path).name
+        kind = " (cover letter)" if is_cover else ""
+        attached = self._probe(ATTACHED_JS, {"target": sel})
+        if not (isinstance(attached, dict) and attached.get("ok")):
+            why = attached.get("note") if isinstance(attached, dict) else None
+            return {
+                "ok": False,
+                "note": f"attach did not stick: {why or 'the input holds no file afterwards'}",
+            }
+        waited = 0
+        while True:
+            echo = str(self._probe(UPLOAD_CONFIRMED_JS, {"target": sel, "name": name}) or "").strip()
+            if echo:
+                return {
+                    "ok": True,
+                    "verified": "rendered",
+                    "cover": is_cover,
+                    "note": f"attached {name}{kind} — the page shows it: {echo[:120]}",
+                }
+            if waited >= self.UPLOAD_CONFIRM_TIMEOUT_MS:
+                return {
+                    "ok": True,
+                    "verified": "input-only",
+                    # An unconfirmed COVER letter is not worth an audit — the
+                    # loop parks only on an unconfirmed resume.
+                    "cover": is_cover,
+                    "note": (
+                        f"attached {name}{kind} — the file is on the input, but the page "
+                        "never named it back, so the form may not have taken it"
+                    ),
+                }
+            sleep_ms(self.UPLOAD_CONFIRM_POLL_MS)
+            waited += self.UPLOAD_CONFIRM_POLL_MS
+
     def upload(self, target: str) -> dict[str, Any]:
         """Attach the file THIS input asks for — resume or cover letter.
 
@@ -1686,8 +1782,9 @@ class LocalDriver:
                 try:
                     frame.set_input_files(sel, path, timeout=15000)
                     sleep_ms(TYPE_SETTLE_MS)
-                    kind = " (cover letter)" if is_cover else ""
-                    return {"ok": True, "note": f"attached {Path(path).name}{kind}"}
+                    # Verify against the selector the file actually went to —
+                    # `sel` may be a page-wide fallback, not `target`.
+                    return self._verify_upload(sel, path, is_cover)
                 except Exception as exc:
                     last = f"{type(exc).__name__}: {exc}"
             if attempt >= 2:
