@@ -2,11 +2,16 @@
   "name": "careerweaver",
   "version": "0.2.0",
   "description": "Tailor resumes from a verified fact graph and fill job applications (Greenhouse/Lever/Workable/Ashby), stopping before submit for human review.",
-  "author": { "name": "idea-torx" },
+  "author": {
+    "name": "idea-torx"
+  },
   "homepage": "https://github.com/idea-torx/CareerWeaver",
   "license": "MIT",
-  "keywords": ["resume", "job-search", "ats", "cover-letter", "auto-apply"],
-  "mcpServers": {
-    "careerweaver": { "command": "weaver-mcp" }
-  }
+  "keywords": [
+    "resume",
+    "job-search",
+    "ats",
+    "cover-letter",
+    "auto-apply"
+  ]
 }
