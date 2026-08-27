@@ -1,6 +1,6 @@
 [project]
 name = "careerweaver"
-version = "0.1.0"
+version = "0.2.0"
 description = "CareerWeaver — free, local, open-source AI-Apply alternative. Canonical fact graph + persona lenses → tailored resumes (md/docx/pdf) and guardrailed auto-apply (Greenhouse/Lever/Workable/Ashby). CLI-first, agent-driven."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -30,6 +30,7 @@ Issues = "https://github.com/idea-torx/CareerWeaver/issues"
 
 [project.scripts]
 weaver = "weaver.cli:main"
+weaver-mcp = "weaver.mcp:main"
 
 [dependency-groups]
 dev = ["pytest>=8.0"]

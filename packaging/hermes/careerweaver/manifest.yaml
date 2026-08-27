@@ -1,0 +1,48 @@
+# Submit as a PR adding this directory to hermes-agent/optional-mcps/.
+# Presence in that directory = approval (merged via PR review).
+manifest_version: 1
+
+name: careerweaver
+description: >-
+  Tailor resumes from a verified fact graph and fill job applications
+  (Greenhouse/Lever/Workable/Ashby), stopping before submit for human review.
+source: https://github.com/idea-torx/CareerWeaver
+
+# CareerWeaver runs entirely on the user's machine: weaver.db holds their career
+# facts and the fill step drives their own Chrome with their own logged-in ATS
+# sessions. Nothing is hosted, so there is no url — Hermes spawns the server.
+transport:
+  type: stdio
+  command: weaver-mcp
+
+# No account, no API key. The user's data never leaves their laptop.
+auth:
+  type: none
+
+suggest:
+  keywords: [resume, job application, cover letter, ats, job search, apply]
+  hosts:
+    - boards.greenhouse.io
+    - jobs.lever.co
+    - apply.workable.com
+    - jobs.ashbyhq.com
+
+post_install: |
+  CareerWeaver is a local tool. Before Hermes can connect:
+
+    1. pip install careerweaver      (puts `weaver-mcp` on PATH)
+    2. weaver init                   (creates ./data/weaver.db)
+    3. weaver seed-import <resume>   (populates the fact graph)
+    4. Set WEAVER_DATA_DIR to the ABSOLUTE path of that data dir in
+       mcp_servers.careerweaver.env — Hermes spawns this server with its own
+       working directory, and the CLI default (./data) would resolve to an
+       empty database with no error.
+
+  The fact graph is the safety mechanism: tailoring only ever draws on facts
+  you imported, so it cannot invent experience you do not have.
+
+  weaver_apply_hold opens a VISIBLE Chrome window, fills the form, and parks at
+  audit_pending without submitting. Review the window and press send yourself —
+  this server has no submit path at all.
+
+  That fill drives a real browser and can run for minutes. Expect a slow call.

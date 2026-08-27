@@ -1,0 +1,11 @@
+{
+  "name": "careerweaver",
+  "owner": { "name": "idea-torx", "url": "https://github.com/idea-torx/CareerWeaver" },
+  "plugins": [
+    {
+      "name": "careerweaver",
+      "source": "./plugins/careerweaver",
+      "description": "Tailor resumes from a verified fact graph and fill job applications, stopping before submit."
+    }
+  ]
+}

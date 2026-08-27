@@ -290,6 +290,68 @@ weaver cycle --count 5 --wide --json
 * Global `--data-dir` overrides where `weaver.db`/`config.json` live (default `./data`).
 * `--visible --hold --tab` is the safe default for agents: never auto-submits, tabs share one window, traces survive kills.
 
+### MCP — Claude, Codex, Hermes
+
+`weaver-mcp` exposes the CLI over MCP stdio. It runs **on your machine**: nothing is
+hosted, no account, and `weaver.db` never leaves the laptop. The fill step drives your
+own Chrome with your own logged-in ATS sessions, which is why a hosted server could not
+do this job.
+
+Nine tools — `weaver_stats`, `weaver_lens_list`, `weaver_jobs_add`, `weaver_jobs_list`,
+`weaver_preflight`, `weaver_tailor`, `weaver_apply_hold`, `weaver_apps_list`,
+`weaver_apps_show`. **There is no submit tool.** `weaver_apply_hold` always passes
+`--hold`, so it fills and parks at `audit_pending` for you to review and send.
+
+**Claude Code** — via the plugin (bundles the server config):
+
+```bash
+claude plugin marketplace add idea-torx/CareerWeaver
+```
+
+```bash
+claude plugin install careerweaver@careerweaver
+```
+
+Or wire the server directly:
+
+```bash
+claude mcp add careerweaver --env WEAVER_DATA_DIR=$PWD/data -- weaver-mcp
+```
+
+**Codex** — `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.careerweaver]
+command = "weaver-mcp"
+env = { WEAVER_DATA_DIR = "/absolute/path/to/CareerWeaver/data" }
+```
+
+**Claude Desktop** — `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "careerweaver": {
+      "command": "weaver-mcp",
+      "env": { "WEAVER_DATA_DIR": "/absolute/path/to/CareerWeaver/data" }
+    }
+  }
+}
+```
+
+**Hermes** — `hermes mcp install careerweaver` once
+[`packaging/hermes/careerweaver/manifest.yaml`](packaging/hermes/careerweaver/manifest.yaml)
+is merged into its `optional-mcps/` catalog.
+
+**Set `WEAVER_DATA_DIR` to an absolute path.** The CLI defaults to `./data` relative to
+the working directory, and an MCP client spawns the server with whatever cwd it likes —
+without it the server creates or reads an empty database wherever the client
+happened to start it (or errors outright, if that directory is not writable).
+
+Run `weaver init` and `weaver seed-import` before first use — an empty fact graph has
+nothing to tailor from. If `weaver-mcp` is not on PATH, use the absolute path
+`<repo>/.venv/bin/weaver-mcp`.
+
 ### Full guide
 
 See **[`docs/agents.md`](docs/agents.md)** for the complete agent contract:
