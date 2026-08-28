@@ -334,13 +334,16 @@ Or wire the server directly:
 codex mcp add careerweaver --env WEAVER_DATA_DIR=/absolute/path/to/CareerWeaver/data -- weaver-mcp
 ```
 
-**Claude Desktop** — `claude_desktop_config.json`:
+**Claude Desktop** — `claude_desktop_config.json`. Use the **absolute** path to
+`weaver-mcp` here: Desktop is launched from the Dock, so it does not inherit your
+shell's `PATH` and a bare command name fails with `ENOENT`. `which weaver-mcp` in a
+terminal prints the path to paste.
 
 ```json
 {
   "mcpServers": {
     "careerweaver": {
-      "command": "weaver-mcp",
+      "command": "/absolute/path/to/bin/weaver-mcp",
       "env": { "WEAVER_DATA_DIR": "/absolute/path/to/CareerWeaver/data" }
     }
   }
