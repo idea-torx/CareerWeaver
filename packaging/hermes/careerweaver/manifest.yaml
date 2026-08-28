@@ -14,17 +14,32 @@ source: https://github.com/idea-torx/CareerWeaver
 # facts and the fill step drives their own Chrome with their own logged-in ATS
 # sessions. Nothing is hosted, so there is no url — Hermes spawns the server.
 #
-# Published to PyPI, so uvx IS the install and no `install:` block is needed.
-# Pinned to an exact version per catalog policy; bumping the pin is a PR to
-# this manifest. `--from` is required because the package is `careerweaver`
-# but the entry point it installs is `weaver-mcp`.
+# The command is an absolute path into the clone, not a bare launcher. Hermes
+# prepends only its managed *Node* directories to the spawn PATH
+# (with_hermes_node_path); there is no uv equivalent, and nothing checks that
+# transport.command resolves at install time. A manifest naming `uvx` or
+# `weaver-mcp` therefore installs clean and then fails at connect with ENOENT
+# on any machine where that binary is not already on the inherited PATH.
 transport:
   type: stdio
-  command: uvx
-  args:
-    - "--from"
-    - "careerweaver==0.2.0"
-    - "weaver-mcp"
+  command: "${INSTALL_DIR}/.venv/bin/weaver-mcp"
+
+# Clone + venv rather than a package launcher, so the server does not depend on
+# what happens to be on PATH. Pinned per catalog dependency policy: full commit
+# SHA, at least 2 weeks old at pin time. This SHA is "docs: absolute path for
+# Claude Desktop; pin work-authorization answers" (2026-08-27). Bumping the pin
+# is a PR to this manifest.
+#
+# Needs Python >= 3.11 (the package's requires-python). `python3` is 3.9 on a
+# stock macOS, and there the pip step dies on an unresolvable playwright — so
+# the venv step walks newer interpreters first and only then falls back.
+install:
+  type: git
+  url: https://github.com/idea-torx/CareerWeaver.git
+  ref: 22d55a574aca3954847d8ec0c1ffc6fb0f1234a2
+  bootstrap:
+    - "python3.13 -m venv .venv || python3.12 -m venv .venv || python3.11 -m venv .venv || python3 -m venv .venv"
+    - ".venv/bin/pip install ."
 
 # No account and no API key — the user's data never leaves their laptop. This
 # is `api_key` only because that is the schema's install-time env prompt:
@@ -53,10 +68,11 @@ suggest:
     - jobs.ashbyhq.com
 
 post_install: |
-  Populate the data directory you just pointed at, if you have not already:
+  Populate the data directory you just pointed at, if you have not already.
+  The install built its own venv, so use the `weaver` CLI inside it:
 
-    uvx --from careerweaver==0.2.0 weaver init
-    uvx --from careerweaver==0.2.0 weaver seed-import <your-resume>
+    <install-dir>/.venv/bin/weaver init
+    <install-dir>/.venv/bin/weaver seed-import <your-resume>
 
   The fact graph is the safety mechanism: tailoring only ever draws on facts
   you imported, so it cannot invent experience you do not have.
