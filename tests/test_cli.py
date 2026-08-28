@@ -459,8 +459,12 @@ def test_adapt_never_leaves_a_resume_row_outside_data_out(
     assert len(rows) == 3
     for row in rows:
         path = Path(row["path"])
+        # `parent == out_dir` is the whole invariant: out_dir is derived from
+        # the workspace fixture, so this proves the row is inside THIS run's
+        # data dir and not /tmp or a path left over from an earlier run. A
+        # literal "/tmp/" prefix check cannot say that — pytest's tmp_path is
+        # itself under /tmp on Linux, so it only ever fired on CI.
         assert path.parent == out_dir, row
-        assert not str(path).startswith(("/tmp/", "/private/tmp/")), row
         assert path.is_file(), row
 
 

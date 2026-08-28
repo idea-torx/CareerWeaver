@@ -1548,10 +1548,16 @@ def test_cdp_attach_opens_a_tab_and_leaves_the_shared_browser_alive(tmp_path: Pa
             f"--user-data-dir={tmp_path / 'profile'}",
             "--headless=new",
             "--no-first-run",
+            # Ubuntu 24.04 (ubuntu-latest) blocks unprivileged user namespaces
+            # via AppArmor, so chromium's sandbox cannot start and the process
+            # dies before it ever binds the CDP port. Only this throwaway CI
+            # host needs it — production spawns the user's own Chrome, which
+            # keeps its sandbox (cli.py `_ensure_real_chrome`).
+            "--no-sandbox",
             "about:blank",
         ],
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
     )
     failures: list[BaseException] = []
 
@@ -1559,6 +1565,17 @@ def test_cdp_attach_opens_a_tab_and_leaves_the_shared_browser_alive(tmp_path: Pa
         cdp = f"http://127.0.0.1:{port}"
         deadline = _time.monotonic() + 20
         while _time.monotonic() < deadline:
+            # A dead host never binds the port, so waiting out the deadline
+            # only turns "chromium refused to start" into an opaque
+            # ECONNREFUSED 20s later. Fail with what chromium actually said.
+            if host.poll() is not None:
+                stderr = (host.stderr.read() if host.stderr else b"").decode(
+                    "utf-8", "replace"
+                )
+                raise AssertionError(
+                    f"the shared browser exited with {host.returncode} before "
+                    f"binding the CDP port:\n{stderr.strip() or '(no output)'}"
+                )
             with socket.socket() as ping:
                 ping.settimeout(0.3)
                 try:
