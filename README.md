@@ -318,12 +318,20 @@ Or wire the server directly:
 claude mcp add careerweaver --env WEAVER_DATA_DIR=$PWD/data -- weaver-mcp
 ```
 
-**Codex** — `~/.codex/config.toml`:
+**Codex** — via the plugin marketplace:
 
-```toml
-[mcp_servers.careerweaver]
-command = "weaver-mcp"
-env = { WEAVER_DATA_DIR = "/absolute/path/to/CareerWeaver/data" }
+```bash
+codex plugin marketplace add https://github.com/idea-torx/CareerWeaver.git
+```
+
+```bash
+codex plugin add careerweaver@careerweaver
+```
+
+Or wire the server directly:
+
+```bash
+codex mcp add careerweaver --env WEAVER_DATA_DIR=/absolute/path/to/CareerWeaver/data -- weaver-mcp
 ```
 
 **Claude Desktop** — `claude_desktop_config.json`:
@@ -348,9 +356,17 @@ the working directory, and an MCP client spawns the server with whatever cwd it 
 without it the server creates or reads an empty database wherever the client
 happened to start it (or errors outright, if that directory is not writable).
 
+Every config above assumes `weaver-mcp` is on your PATH, which it is after
+`uv tool install careerweaver` (or `pip install careerweaver`). If it is not, give the
+absolute path instead — either `<repo>/.venv/bin/weaver-mcp`, or a pinned launcher that
+needs no prior install:
+
+```bash
+uvx --from careerweaver==0.2.0 weaver-mcp
+```
+
 Run `weaver init` and `weaver seed-import` before first use — an empty fact graph has
-nothing to tailor from. If `weaver-mcp` is not on PATH, use the absolute path
-`<repo>/.venv/bin/weaver-mcp`.
+nothing to tailor from.
 
 ### Full guide
 

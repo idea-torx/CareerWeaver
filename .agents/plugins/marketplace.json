@@ -1,0 +1,20 @@
+{
+  "name": "careerweaver",
+  "interface": {
+    "displayName": "CareerWeaver"
+  },
+  "plugins": [
+    {
+      "name": "careerweaver",
+      "source": {
+        "source": "local",
+        "path": "./plugins/careerweaver"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "name": "careerweaver",
+  "version": "0.2.0",
+  "description": "Tailor resumes from a verified fact graph and fill job applications (Greenhouse/Lever/Workable/Ashby), stopping before submit for human review.",
+  "author": {
+    "name": "idea-torx",
+    "url": "https://github.com/idea-torx"
+  },
+  "homepage": "https://github.com/idea-torx/CareerWeaver",
+  "repository": "https://github.com/idea-torx/CareerWeaver",
+  "license": "MIT",
+  "keywords": ["resume", "job-search", "ats", "cover-letter", "auto-apply"],
+  "interface": {
+    "displayName": "CareerWeaver",
+    "shortDescription": "Resume tailoring and job application filling, human-approved",
+    "longDescription": "Builds resumes only from facts you imported, fills ATS applications in your own browser, and stops at audit_pending. There is no submit tool.",
+    "developerName": "idea-torx",
+    "category": "Productivity",
+    "capabilities": ["MCP server"],
+    "websiteURL": "https://github.com/idea-torx/CareerWeaver",
+    "defaultPrompt": [
+      "Tailor my resume for this job posting.",
+      "What jobs am I tracking?",
+      "Fill this application and stop before submitting."
+    ]
+  }
+}
